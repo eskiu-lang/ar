@@ -2,12 +2,15 @@
 // camera permission and hands the activity to nativeStart, which installs ARCore if needed
 // and runs the session; the activity's pause and resume pause and resume it (the camera is
 // released in the background), and the display's rotation and size go to nativeDisplay.
+// decodeGray reads an image target's file for ARCore's image database.
 package org.eskiu.ar;
 
 import android.Manifest;
 import android.app.Activity;
 import android.app.Application;
 import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
 import android.os.Bundle;
@@ -36,6 +39,33 @@ public final class EskiuAr {
             display(activity);
             nativeStart(activity, sensorOrientation(activity));
         });
+    }
+
+    // The PNG or JPEG file at `path` as 8-bit gray (BT.601 luma, as Eskiu turns RGBA pixels
+    // gray): its width and height as 4 bytes each, big-endian, then the rows. Null when the
+    // file does not decode. Called from ar.c while it builds the image database.
+    static byte[] decodeGray(String path) {
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inPreferredConfig = Bitmap.Config.ARGB_8888;
+        Bitmap bitmap = BitmapFactory.decodeFile(path, options);
+        if (bitmap == null) return null;
+        int width = bitmap.getWidth();
+        int height = bitmap.getHeight();
+        if ((long) width * height > 8192L * 8192L) { bitmap.recycle(); return null; }
+        int[] row = new int[width];
+        byte[] out = new byte[8 + width * height];
+        out[0] = (byte) (width >>> 24); out[1] = (byte) (width >>> 16); out[2] = (byte) (width >>> 8); out[3] = (byte) width;
+        out[4] = (byte) (height >>> 24); out[5] = (byte) (height >>> 16); out[6] = (byte) (height >>> 8); out[7] = (byte) height;
+        for (int y = 0; y < height; y++) {
+            bitmap.getPixels(row, 0, width, 0, y, width, 1);
+            for (int x = 0; x < width; x++) {
+                int c = row[x];
+                int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
+                out[8 + y * width + x] = (byte) ((77 * r + 150 * g + 29 * b + 128) >> 8);
+            }
+        }
+        bitmap.recycle();
+        return out;
     }
 
     // The back camera's sensor orientation: how far its picture turns clockwise to be upright

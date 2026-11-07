@@ -2,7 +2,7 @@
 // mode (AR_TEXTURE_UPDATE_MODE_EXPOSE_HARDWARE_BUFFER), so ArSession_update needs no GL
 // context or texture (docs/design.md), on a thread of its own. After each new frame that
 // thread copies the CPU image (YUV_420_888, as NV12) and reads the camera, planes, anchors,
-// points, light and depth into a snapshot; three snapshots rotate (one being filled, the
+// points, light, depth and image targets into a snapshot; three snapshots rotate (one being filled, the
 // newest waiting, the one lent to Eskiu), and "frame" is posted on the "ar_frame" channel
 // when none is waiting. Hit tests and anchors call ARCore under the session's lock. EskiuAr
 // (Java) asks for the camera permission, follows the activity's pause and resume, and calls
@@ -11,6 +11,7 @@
 #include <jni.h>
 #include <math.h>
 #include <pthread.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -47,6 +48,8 @@ static int loadArcore(void) {
 #define FLAG_DEPTH 8
 #define FLAG_POINTS 16
 #define FLAG_LIGHT_HDR 32
+#define FLAG_IMAGES 64
+#define MAX_IMAGES 100
 
 // One frame's worth of everything Eskiu reads, owned by this file.
 typedef struct {
@@ -67,6 +70,8 @@ typedef struct {
     uint16_t *depth;
     size_t depth_cap;
     int depth_width, depth_height, has_depth;
+    int image_count;
+    double images[MAX_IMAGES][22];
 } Snapshot;
 
 static Snapshot snapshots[3];
@@ -101,6 +106,15 @@ typedef struct { ArAnchor *anchor; int64_t id; } KnownAnchor;
 static KnownAnchor anchors[MAX_ANCHORS];
 static int anchor_count;
 static int64_t next_id = 1;
+
+// The image targets (under session_lock): tight gray pixels or a file path (decoded by
+// EskiuAr.decodeGray when the database is built), the width in meters and an ArImageState;
+// which target each database index is, and the id each target found has.
+typedef struct { uint8_t *gray; int width, height; char *path; double meters; int state; int64_t id; } Target;
+static Target targets[MAX_IMAGES];
+static int target_count;
+static int db_target[MAX_IMAGES];
+static int db_count;
 
 static void status(const char *text) { ui_native_emit("ar", text); }
 
@@ -407,6 +421,52 @@ static void readDepth(Snapshot *s) {
     p_ArImage_release(image);
 }
 
+// The image targets ARCore knows of, tracked or seen before (not stopped).
+static void readImages(Snapshot *s) {
+    s->image_count = 0;
+    ArTrackableList *list = NULL;
+    p_ArTrackableList_create(session, &list);
+    p_ArSession_getAllTrackables(session, AR_TRACKABLE_AUGMENTED_IMAGE_, list);
+    int32_t n = 0;
+    p_ArTrackableList_getSize(session, list, &n);
+    ArPose *pose = NULL;
+    p_ArPose_create(session, NULL, &pose);
+    for (int i = 0; i < n && s->image_count < MAX_IMAGES; i++) {
+        ArTrackable *item = NULL;
+        p_ArTrackableList_acquireItem(session, list, i, &item);
+        ArAugmentedImage *image = (ArAugmentedImage *)item;
+        ArTrackingState state = AR_TRACKING_STATE_STOPPED_;
+        p_ArTrackable_getTrackingState(session, item, &state);
+        int32_t index = -1;
+        p_ArAugmentedImage_getIndex(session, image, &index);
+        if (state == AR_TRACKING_STATE_STOPPED_ || index < 0 || index >= db_count) {
+            p_ArTrackable_release(item);
+            continue;
+        }
+        Target *target = &targets[db_target[index]];
+        if (!target->id) target->id = next_id++;
+        ArAugmentedImageTrackingMethod method = 0;
+        p_ArAugmentedImage_getTrackingMethod(session, image, &method);
+        double *info = s->images[s->image_count++];
+        memset(info, 0, sizeof(double) * 22);
+        info[0] = (double)target->id;
+        info[1] = db_target[index];
+        info[2] = trackingOf(state);
+        info[3] = method == AR_AUGMENTED_IMAGE_TRACKING_METHOD_FULL_TRACKING_ ? 1 :
+                  method == AR_AUGMENTED_IMAGE_TRACKING_METHOD_LAST_KNOWN_POSE_ ? 2 : 0;
+        p_ArAugmentedImage_getCenterPose(session, image, pose);
+        poseMatrix(pose, &info[4]);
+        float ex = 0, ez = 0;
+        p_ArAugmentedImage_getExtentX(session, image, &ex);
+        p_ArAugmentedImage_getExtentZ(session, image, &ez);
+        info[20] = ex;
+        info[21] = ez;
+        p_ArTrackable_release(item);
+    }
+    p_ArPose_destroy(pose);
+    p_ArTrackableList_destroy(list);
+}
+
 // One turn of the session's thread: update, and when the frame is new fill a free snapshot
 // and make it the one waiting. Returns 1 when there was a new frame.
 static int step(void) {
@@ -445,6 +505,8 @@ static int step(void) {
         else s->has_light = 0;
         if (flags & FLAG_DEPTH) readDepth(s);
         else s->has_depth = 0;
+        if (flags & FLAG_IMAGES) readImages(s);
+        else s->image_count = 0;
     }
     pthread_mutex_unlock(&session_lock);
     if (!ok) return 1;
@@ -513,6 +575,64 @@ static void chooseCameraConfig(void) {
     p_ArCameraConfigFilter_destroy(filter);
 }
 
+// A target's file decoded to gray by EskiuAr.decodeGray (a byte array: width and height as
+// 4 bytes each, big-endian, then the rows), kept in the target; 0 when it does not decode.
+static int decodeTarget(Target *target) {
+    JNIEnv *env = ui_jni_env();
+    jclass type = ui_find_class("org.eskiu.ar.EskiuAr");
+    if (!type) return 0;
+    jmethodID decode = (*env)->GetStaticMethodID(env, type, "decodeGray", "(Ljava/lang/String;)[B");
+    jstring path = (*env)->NewStringUTF(env, target->path);
+    jbyteArray bytes = decode && path ? (jbyteArray)(*env)->CallStaticObjectMethod(env, type, decode, path) : NULL;
+    if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionClear(env); bytes = NULL; }
+    int ok = 0;
+    jsize length = bytes ? (*env)->GetArrayLength(env, bytes) : 0;
+    if (length > 8) {
+        jbyte *data = (*env)->GetByteArrayElements(env, bytes, NULL);
+        const uint8_t *u = (const uint8_t *)data;
+        int w = (int)((uint32_t)u[0] << 24 | (uint32_t)u[1] << 16 | (uint32_t)u[2] << 8 | u[3]);
+        int h = (int)((uint32_t)u[4] << 24 | (uint32_t)u[5] << 16 | (uint32_t)u[6] << 8 | u[7]);
+        if (w > 0 && h > 0 && (int64_t)w * h == length - 8 && (target->gray = malloc((size_t)w * h)) != NULL) {
+            memcpy(target->gray, u + 8, (size_t)w * h);
+            target->width = w;
+            target->height = h;
+            ok = 1;
+        }
+        (*env)->ReleaseByteArrayElements(env, bytes, data, JNI_ABORT);
+    }
+    if (bytes) (*env)->DeleteLocalRef(env, bytes);
+    if (path) (*env)->DeleteLocalRef(env, path);
+    (*env)->DeleteLocalRef(env, type);
+    return ok;
+}
+
+// The image database of the targets, when the flags ask for them: each one added with its
+// width in meters (20 to 30 ms each, ARCore says), its state set by the result (ARCore
+// refuses an image with too few features). NULL when there are none.
+static ArAugmentedImageDatabase *buildDatabase(void) {
+    db_count = 0;
+    if (!(flags & FLAG_IMAGES) || target_count == 0) return NULL;
+    ArAugmentedImageDatabase *database = NULL;
+    p_ArAugmentedImageDatabase_create(session, &database);
+    if (!database) return NULL;
+    for (int i = 0; i < target_count; i++) {
+        Target *target = &targets[i];
+        if (target->meters <= 0 || (!target->gray && !target->path)) { target->state = 2; continue; }
+        if (!target->gray && !decodeTarget(target)) { target->state = 2; continue; }
+        char name[16];
+        snprintf(name, sizeof(name), "%d", i);
+        int32_t index = -1;
+        ArStatus result = p_ArAugmentedImageDatabase_addImageWithPhysicalSize(session, database, name, target->gray, target->width,
+                                                                              target->height, target->width, (float)target->meters, &index);
+        if (result == AR_SUCCESS_ && index >= 0 && index < MAX_IMAGES) {
+            target->state = 1;
+            db_target[index] = i;
+            if (index >= db_count) db_count = index + 1;
+        } else target->state = 2;
+    }
+    return database;
+}
+
 // Applies the flags to the session; 0 when ARCore refuses the configuration.
 static int configure(void) {
     ArConfig *config = NULL;
@@ -526,6 +646,9 @@ static int configure(void) {
     int32_t depth = 0;
     if (flags & FLAG_DEPTH) p_ArSession_isDepthModeSupported(session, AR_DEPTH_MODE_AUTOMATIC_, &depth);
     p_ArConfig_setDepthMode(session, config, depth ? AR_DEPTH_MODE_AUTOMATIC_ : 0);
+    ArAugmentedImageDatabase *database = buildDatabase();
+    p_ArConfig_setAugmentedImageDatabase(session, config, database);
+    if (database) p_ArAugmentedImageDatabase_destroy(database);
     ArStatus result = p_ArSession_configure(session, config);
     p_ArConfig_destroy(config);
     return result == AR_SUCCESS_;
@@ -578,6 +701,7 @@ static void begin(JNIEnv *env, jobject activity) {
 static void end(void) {
     stopThread();
     pthread_mutex_lock(&session_lock);
+    for (int i = 0; i < target_count; i++) targets[i].id = 0;
     if (session) {
         forgetAnchors();
         forgetPlanes();
@@ -857,4 +981,55 @@ void ar_native_anchor_remove(double id) {
         break;
     }
     pthread_mutex_unlock(&session_lock);
+}
+
+// A new set of image targets; the session takes them when it is configured next (the
+// ar_native_session call that follows).
+void ar_native_images(int count, int tracked) {
+    (void)tracked;
+    if (count < 0) count = 0;
+    if (count > MAX_IMAGES) count = MAX_IMAGES;
+    pthread_mutex_lock(&session_lock);
+    for (int i = 0; i < target_count; i++) {
+        free(targets[i].gray);
+        free(targets[i].path);
+    }
+    memset(targets, 0, sizeof(targets));
+    for (int i = 0; i < count; i++) targets[i].state = 2;
+    target_count = count;
+    db_count = 0;
+    pthread_mutex_unlock(&session_lock);
+}
+
+void ar_native_image_add(int index, uint8_t *gray, int width, int height, const char *path, double physical_width) {
+    pthread_mutex_lock(&session_lock);
+    if (index >= 0 && index < target_count) {
+        Target *target = &targets[index];
+        target->meters = physical_width;
+        if (gray && width > 0 && height > 0 && (target->gray = malloc((size_t)width * height)) != NULL) {
+            memcpy(target->gray, gray, (size_t)width * height);
+            target->width = width;
+            target->height = height;
+        } else if (path) target->path = strdup(path);
+        if (physical_width > 0 && (target->gray || target->path)) target->state = 0;
+    }
+    pthread_mutex_unlock(&session_lock);
+}
+
+int ar_native_image_state(int index) {
+    pthread_mutex_lock(&session_lock);
+    int state = index >= 0 && index < target_count ? targets[index].state : 2;
+    pthread_mutex_unlock(&session_lock);
+    return state;
+}
+
+int ar_native_tracked_image_count(void) {
+    Snapshot *s = lentSnapshot();
+    return s ? s->image_count : 0;
+}
+
+void ar_native_tracked_image(int index, double *info) {
+    Snapshot *s = lentSnapshot();
+    memset(info, 0, sizeof(double) * 22);
+    if (s && index >= 0 && index < s->image_count) memcpy(info, s->images[index], sizeof(double) * 22);
 }

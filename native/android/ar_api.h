@@ -26,6 +26,9 @@ typedef struct ArPlane_ ArPlane;
 typedef struct ArAnchor_ ArAnchor;
 typedef struct ArHitResult_ ArHitResult;
 typedef struct ArHitResultList_ ArHitResultList;
+typedef struct ArAugmentedImage_ ArAugmentedImage;
+typedef struct ArAugmentedImageDatabase_ ArAugmentedImageDatabase;
+typedef int32_t ArAugmentedImageTrackingMethod;
 typedef int32_t ArStatus;
 typedef int32_t ArAvailability;
 typedef int32_t ArInstallStatus;
@@ -55,6 +58,9 @@ enum {
     AR_TRACKABLE_PLANE_ = 0x41520101,
     AR_TRACKABLE_POINT_ = 0x41520102,
     AR_TRACKABLE_DEPTH_POINT_ = 0x41520111,
+    AR_TRACKABLE_AUGMENTED_IMAGE_ = 0x41520104,
+    AR_AUGMENTED_IMAGE_TRACKING_METHOD_FULL_TRACKING_ = 1,
+    AR_AUGMENTED_IMAGE_TRACKING_METHOD_LAST_KNOWN_POSE_ = 2,
     AR_PLANE_HORIZONTAL_DOWNWARD_FACING_ = 1,
     AR_PLANE_VERTICAL_ = 2,
     AR_TEXTURE_UPDATE_MODE_EXPOSE_HARDWARE_BUFFER_ = 1,
@@ -166,6 +172,15 @@ enum {
     X(void, ArAnchor_getPose, (const ArSession *session, const ArAnchor *anchor, ArPose *out_pose)) \
     X(void, ArAnchor_getTrackingState, (const ArSession *session, const ArAnchor *anchor, ArTrackingState *out_tracking_state)) \
     X(void, ArAnchor_detach, (ArSession *session, ArAnchor *anchor)) \
-    X(void, ArAnchor_release, (ArAnchor *anchor))
+    X(void, ArAnchor_release, (ArAnchor *anchor)) \
+    X(void, ArAugmentedImageDatabase_create, (const ArSession *session, ArAugmentedImageDatabase **out_augmented_image_database)) \
+    X(void, ArAugmentedImageDatabase_destroy, (ArAugmentedImageDatabase *augmented_image_database)) \
+    X(ArStatus, ArAugmentedImageDatabase_addImageWithPhysicalSize, (const ArSession *session, ArAugmentedImageDatabase *augmented_image_database, const char *image_name, const uint8_t *image_grayscale_pixels, int32_t image_width_in_pixels, int32_t image_height_in_pixels, int32_t image_stride_in_pixels, float image_width_in_meters, int32_t *out_index)) \
+    X(void, ArConfig_setAugmentedImageDatabase, (const ArSession *session, ArConfig *config, const ArAugmentedImageDatabase *augmented_image_database)) \
+    X(void, ArAugmentedImage_getCenterPose, (const ArSession *session, const ArAugmentedImage *augmented_image, ArPose *out_pose)) \
+    X(void, ArAugmentedImage_getExtentX, (const ArSession *session, const ArAugmentedImage *augmented_image, float *out_extent_x)) \
+    X(void, ArAugmentedImage_getExtentZ, (const ArSession *session, const ArAugmentedImage *augmented_image, float *out_extent_z)) \
+    X(void, ArAugmentedImage_getIndex, (const ArSession *session, const ArAugmentedImage *augmented_image, int32_t *out_index)) \
+    X(void, ArAugmentedImage_getTrackingMethod, (const ArSession *session, const ArAugmentedImage *image, ArAugmentedImageTrackingMethod *out_tracking_method))
 
 #endif
