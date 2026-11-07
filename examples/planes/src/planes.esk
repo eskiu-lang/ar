@@ -11,6 +11,7 @@ import <ar>;
 // them.
 String planes_summary;
 bool planes_place;
+int planes_place_tries;
 bool planes_clear;
 List<int64> planes_anchors;
 
@@ -21,6 +22,7 @@ string planes_status_text(int status) {
     if (status == ArInstalling) { return "Installing Google Play Services for AR"; }
     if (status == ArPaused) { return "Paused"; }
     if (status == ArFailed) { return "The session failed"; }
+    if (status == ArWaitingForTap) { return "Tap anywhere to start AR"; }
     return "Starting";
 }
 
@@ -37,7 +39,9 @@ void planes_read(*ArFrame frame) {
         planes_clear = false;
     }
     if (planes_place) {
-        planes_place = false;
+        // On the web a hit test answers from the next frames: keep asking for half a second.
+        planes_place_tries++;
+        if (planes_place_tries > 30) { planes_place = false; }
         // The middle of the picture, in a viewport the size of the upright picture.
         float w = (float)(frame.image.rotation % 180 == 0 ? frame.image.width : frame.image.height);
         float h = (float)(frame.image.rotation % 180 == 0 ? frame.image.height : frame.image.width);
@@ -46,12 +50,13 @@ void planes_read(*ArFrame frame) {
         if (n > 0) {
             int64 id = ar_anchor_add_hit(&hits[0]);
             if (id != 0) { planes_anchors.push(id); }
+            planes_place = false;
         }
     }
     ArVec3 at = ar_mat4_position(frame.camera);
-    String_format(&planes_summary, "Tracking %s\nCamera at %.2f, %.2f, %.2f m\nPicture %dx%d, turned %d\n",
-                  planes_tracking_text(frame.tracking), at.x, at.y, at.z, frame.image.width, frame.image.height,
-                  frame.image.rotation);
+    String_format(&planes_summary, "Tracking %s\nCamera at %.2f, %.2f, %.2f m\n%s %dx%d, turned %d\n",
+                  planes_tracking_text(frame.tracking), at.x, at.y, at.z, frame.has_image ? "Picture" : "No picture, view",
+                  frame.image.width, frame.image.height, frame.image.rotation);
     for (i in 0..frame.plane_count) {
         *ArPlane p = &frame.planes[i];
         if (p.subsumed_by != 0) { continue; }
@@ -71,7 +76,10 @@ void Planes() {
         Text(planes_status_text(planes_status.get()));
         planes_tick.get();
         Text(planes_summary.data == null ? "" : planes_summary.data);
-        Button("Place an anchor in the middle") { planes_place = true; }
+        Button("Place an anchor in the middle") {
+            planes_place = true;
+            planes_place_tries = 0;
+        }
         Button("Clear the anchors") { planes_clear = true; }
     }
 }
