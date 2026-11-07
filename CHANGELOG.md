@@ -24,5 +24,24 @@ All notable changes to this package are documented in this file. The format is b
   `ar_anchor_remove`).
 - ARCore runs with no GL context (hardware-buffer mode) and is opened with `dlopen`;
   `tools/check_arcore_api.sh` checks the declarations against ARCore's header and library.
-- The web reports `ArUnsupported`.
-- `examples/planes`.
+- Image targets: `ArOptions.images` (`ArImageTarget`: a name, gray or RGBA pixels or a PNG
+  or JPEG file, and a width in meters) and `tracked_images`; `ArFrame.images`
+  (`ArTrackedImage`: target index and name, pose, size, full or last-known tracking);
+  `ar_image_state`. ARKit reference images (validated first), ARCore augmented images,
+  WebXR image tracking.
+- The web: a WebXR `immersive-ar` session (Chrome on Android) started from a tap
+  (`ArWaitingForTap`), with the view's pose and intrinsics, planes, anchors, asynchronous hit
+  tests, the light probe, depth and image targets where the browser has them, and the page
+  over the camera through `dom-overlay`. The browser draws the camera: `ArFrame.has_image`
+  is false, or the picture is RGBA (format 4) with raw camera access. Other browsers report
+  `ArUnsupported`. Drawing into the session with eskiu-gpu waits for WebXR's WebGPU binding
+  (`docs/web.md`).
+- One light scale on every platform: `ArLight.intensity` is linear and 1.0 in a neutral
+  scene (ARKit's lumens over 1000; ARCore's gamma pixel intensity to linear space over
+  middle gray), `color` a linear tint; `raw_intensity`, `source` (`ArLightSource`),
+  `ar_light_from_arkit`, `ar_light_from_arcore`, `ar_gamma_to_linear`; `ar_temperature_rgb` gives
+  linear RGB.
+- Android declares ARCore "optional" in the manifest (`[android.meta_data]` in `ui.toml`,
+  which needs the ui tool after eskiu-ui 0.3.0); an AR-only app sets "required" and the
+  `android.hardware.camera.ar` feature in its own `ui.toml`.
+- `examples/planes`: tap to start on the web, hit tests retried over a few frames.
