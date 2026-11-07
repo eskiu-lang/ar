@@ -87,8 +87,9 @@ landscape and square viewports) and a random point in front of each, that projec
 view puts it at the viewport pixel the display transform maps to its picture pixel (within
 0.05 pixels), that the affine form agrees, that its depth is between 0 and 1, and that the
 ray under that pixel passes within 0.1 mm of it. It also checks the viewport's center and
-corners, portrait's corner mapping, the depth at near and far, and the color temperature
-tint.
+corners, portrait's corner mapping, the depth at near and far, the color temperature
+tint, and the light scale ([session](session.md#light)): ARKit's 1000 lumens and ARCore's
+middle gray are 1.0, and both double when the light doubles.
 
 What needs a device: that each platform's picture, pose and rotation follow these
 conventions on a phone held in each orientation (a point placed with a hit test should stay

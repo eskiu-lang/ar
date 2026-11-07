@@ -47,6 +47,10 @@ Result<int, string> draw(*ArFrame frame) {
   `frame.light.color`, both linear and 1.0 in a neutral scene ([session](session.md#light));
   with `light_hdr` on Android, `main_direction` and `main_intensity` give a directional light
   and `harmonics` the ambient light (9 RGB coefficients, ARCore's order and scale).
+- **The web.** The browser draws the camera (`frame.has_image` is false): skip the
+  background. eskiu-gpu cannot draw into a WebXR session in shipping browsers (WebGPU's
+  WebXR binding is behind flags); a transparent canvas in the page shows over the camera
+  through the DOM overlay ([web](web.md#drawing)).
 - **Occlusion.** `frame.depth` lines up with the picture as stored; sample it through
   `ArFrame_display_transform` to hide content behind real surfaces.
 

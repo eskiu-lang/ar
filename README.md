@@ -3,7 +3,7 @@
 </p>
 
 <h2 align="center">ar</h2>
-<p align="center">Augmented reality for apps on eskiu-lang/ui: ARKit on iOS, ARCore on Android.</p>
+<p align="center">Augmented reality for apps on eskiu-lang/ui: ARKit on iOS, ARCore on Android, WebXR on the web.</p>
 <p align="center"><sub>Part of the <a href="https://github.com/eskiu-lang">Eskiu</a> project</sub></p>
 
 <p align="center">
@@ -15,9 +15,10 @@
 ---
 
 A world-tracking session that hands each camera frame to Eskiu: the picture as YUV planes
-for eskiu-gpu to draw, the camera's pose, planes, anchors, hit tests, feature points, the
-light estimate and depth. The view, projection and hit-test rays are computed in Eskiu, the
-same on both platforms. Neither platform needs a GL context.
+for eskiu-gpu to draw, the camera's pose, planes, anchors, hit tests, image targets, feature
+points, the light estimate on one scale, and depth. The view, projection and hit-test rays
+are computed in Eskiu, the same on every platform. Neither phone needs a GL context; on the
+web the session runs in Chrome on Android and the browser draws the camera.
 
 ```eskiu
 import <ar>;
@@ -44,8 +45,10 @@ void World() {
 
 - [The session](docs/session.md): options, status, frames, planes, anchors, hit tests, threads
 - [Drawing](docs/drawing.md): the camera picture and the world with eskiu-gpu
+- [Image targets](docs/images.md): pictures to find in the world
+- [AR on the web](docs/web.md): WebXR immersive-ar, what an app can draw there
 - [The geometry](docs/math.md): pose, projection, display transform, rays
-- [Design](docs/design.md): ARCore without GL, ARKit frames, what needs a device
+- [Design](docs/design.md): ARCore without GL, ARKit frames, the light scale, what needs a device
 - [Platforms, the example and tests](docs/README.md)
 - [API reference](docs/api.md): every public function and type
 

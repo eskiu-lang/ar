@@ -1,7 +1,7 @@
 # The session
 
-`use_ar_session` runs a world-tracking session (ARKit on iOS, ARCore on Android) while its
-scope is mounted and hands each new frame to its handler on the UI thread. `use_ar_status`
+`use_ar_session` runs a world-tracking session (ARKit on iOS, ARCore on Android, WebXR on
+the web) while its scope is mounted and hands each new frame to its handler on the UI thread. `use_ar_status`
 says how the session is doing.
 
 ```eskiu
@@ -31,7 +31,9 @@ void World() {
 | `light_hdr` | `false` | ARCore's environmental HDR estimate instead (main light and spherical harmonics). iOS treats it as `light`. |
 | `depth` | `false` | A depth image in `frame.depth` where the device has one: LiDAR on iOS (`sceneDepth`), the Depth API on Android. |
 | `points` | `false` | The feature points in `frame.points`. |
-| `image_width`, `image_height` | 1280, 720 | The camera picture's size, a wish as the sensor sees it (landscape). iOS picks the smallest video format that holds it, Android the smallest CPU image config; both fall back to the largest. |
+| `image_width`, `image_height` | 1280, 720 | The camera picture's size, a wish as the sensor sees it (landscape). iOS picks the smallest video format that holds it, Android the smallest CPU image config; both fall back to the largest. The web scales its picture (with raw camera access) to fit the longer side. |
+| `images`, `image_count` | none | Pictures to find in the world ([image targets](images.md)). |
+| `tracked_images` | 1 | How many of them ARKit follows at once. |
 
 New options start the session again with them: on iOS the world is kept (same session, new
 configuration), on Android the session is configured again, and a new picture size makes a
@@ -46,11 +48,12 @@ last one.
 |---|---|
 | `ArStarting` | Before the platform answers. |
 | `ArRunning` | The session runs; frames come. |
-| `ArUnsupported` | No AR: the device cannot (no ARCore support, Android before 8.1, an old iPhone), the iOS simulator, the browser. |
+| `ArUnsupported` | No AR: the device cannot (no ARCore support, Android before 8.1, an old iPhone), the iOS simulator, a browser without WebXR AR. |
 | `ArDenied` | The camera permission was refused. |
 | `ArInstalling` | Android is installing or updating Google Play Services for AR; the session starts when the app comes back. |
 | `ArPaused` | The app is in the background (or another app took the camera). |
 | `ArFailed` | Anything else. |
+| `ArWaitingForTap` | The web: the browser starts the session only from a tap; the next one anywhere on the page starts it ([web](web.md)). |
 
 ## A frame
 
@@ -58,7 +61,7 @@ last one.
 
 | Field | What it is |
 |---|---|
-| `image` | The camera picture: `ArCameraImage`, with the field layout of ui-camera's `CameraFrame` (NV12 on both platforms; see [drawing](drawing.md)). `image.rotation` turns it upright for the screen. |
+| `image`, `has_image` | The camera picture: `ArCameraImage`, with the field layout of ui-camera's `CameraFrame` (NV12 on iOS and Android; see [drawing](drawing.md)). `image.rotation` turns it upright for the screen. `has_image` is false on the web, where the browser draws the camera and `image` has only the view's size (RGBA with raw camera access: [web](web.md)). |
 | `camera` | The camera's pose, camera to world, x right and y up along the picture as the sensor gives it. `ArFrame_view` turns it for the screen. |
 | `intrinsics` | The picture's focal lengths and principal point in pixels, and its size. |
 | `tracking`, `reason` | `ArTrackingNormal`, `ArTrackingLimited` (with an `ArReason`) or `ArTrackingNone` (the pose means nothing). |
@@ -66,6 +69,7 @@ last one.
 | `anchors`, `anchor_count` | The app's anchors with their current poses. |
 | `points`, `point_count` | Feature points (`position`, `confidence`; 1 on iOS). |
 | `light` | `ArLight`: `valid`, `intensity` (linear, 1.0 is a neutral scene; see [Light](#light)), `temperature` (kelvin, iOS), `color` (a linear tint), `raw_intensity` and `source` (the platform's own value and where it came from), and with `light_hdr` on Android the main light and 9 RGB spherical harmonics. |
+| `images`, `image_count` | The image targets found so far (`ArTrackedImage`: target index and name, pose, size, how it is followed; [image targets](images.md)). |
 | `depth` | `ArDepth`: size, format (`ArDepthMeters32` on iOS, `ArDepthMillimeters16` on Android), rows, `data` (null when none). `ArDepth_meters(x, y)` reads one pixel. It lines up with the picture as the sensor gives it. |
 
 ### Light
@@ -152,4 +156,9 @@ newer frames, never a queue.
   Play Services for AR, which the session offers to install. The package's `ui.toml` adds
   the camera permission and `com.google.ar:core`, so the app builds through Gradle. The app's
   library opens ARCore with `dlopen` and needs no GL ([design](design.md)).
-- **Web.** No AR in this version: `ArUnsupported`.
+- **Android, ARCore optional or required.** The package's `ui.toml` declares ARCore
+  "optional" (`<meta-data android:name="com.google.ar.core" android:value="optional"/>`),
+  so the app installs on any device and the session reports `ArUnsupported` where ARCore
+  cannot run ([platforms](README.md#android-arcore-optional-or-required)).
+- **Web.** WebXR's immersive-ar in Chrome on Android, from a tap; the browser draws the
+  camera ([web](web.md)). Elsewhere `ArUnsupported`.
