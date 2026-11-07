@@ -51,14 +51,16 @@ const int AR_HIT_ESTIMATED = 2;
 const int AR_HIT_PLANE = 1;
 const int AR_HIT_ESTIMATE = 2;
 
-// What use_ar_session asks for: plane detection (horizontal, vertical), the light estimate,
-// depth where the device has it (LiDAR on iOS, the Depth API on Android), the feature
-// points, and the size of the camera picture (a wish: the platform gives the nearest it
-// has, as the sensor sees it, landscape).
+// What use_ar_session asks for: plane detection (horizontal, vertical), the light estimate
+// (`light_hdr` asks ARCore for its environmental HDR estimate instead: main light and
+// spherical harmonics; iOS ignores it), depth where the device has it (LiDAR on iOS, the
+// Depth API on Android), the feature points, and the size of the camera picture (a wish: the
+// platform gives the nearest it has, as the sensor sees it, landscape).
 struct ArOptions {
     bool horizontal = true;
     bool vertical = false;
     bool light = true;
+    bool light_hdr = false;
     bool depth = false;
     bool points = false;
     int image_width = 1280;
@@ -167,7 +169,8 @@ struct ArFrame {
 // waiting and none was posted since the last acquire. ar_native_frame_acquire lends the
 // newest frame: it fills AR_IMAGE_INFO int64 values (ui-camera's frame layout) and
 // AR_CAMERA_INFO doubles and returns 1, or 0 when there is none. While it is lent, the
-// other calls read it; ar_native_frame_release ends the loan.
+// other calls read it; ar_native_frame_release ends the loan. Ids cross as doubles (exact to
+// 2^53), so the web's JavaScript sees plain numbers.
 extern void ar_native_session(int on, int flags, int width, int height);
 extern int ar_native_frame_acquire(*int64 image, *double camera);
 extern void ar_native_frame_release();
@@ -179,8 +182,8 @@ extern int ar_native_points(*float out, int max_points);
 extern int ar_native_light(*double info);
 extern int ar_native_depth(*int64 info);
 extern int ar_native_hit_test(*float ray, int targets, *double out, int max_hits);
-extern int64 ar_native_anchor_add(*float pose, int64 plane);
-extern void ar_native_anchor_remove(int64 id);
+extern double ar_native_anchor_add(*float pose, double plane);
+extern void ar_native_anchor_remove(double id);
 
 // Option flags for ar_native_session.
 const int AR_FLAG_HORIZONTAL = 1;
@@ -188,6 +191,7 @@ const int AR_FLAG_VERTICAL = 2;
 const int AR_FLAG_LIGHT = 4;
 const int AR_FLAG_DEPTH = 8;
 const int AR_FLAG_POINTS = 16;
+const int AR_FLAG_LIGHT_HDR = 32;
 
 // How many values the native side fills. The image: width, height, format, plane_count,
 // rotation, front, matrix, full_range, timestamp_ns, then for each of 3 planes its data
@@ -229,6 +233,7 @@ int ar_flags(ArOptions options) {
     if (options.light) { flags |= AR_FLAG_LIGHT; }
     if (options.depth) { flags |= AR_FLAG_DEPTH; }
     if (options.points) { flags |= AR_FLAG_POINTS; }
+    if (options.light_hdr) { flags |= AR_FLAG_LIGHT_HDR; }
     return flags;
 }
 
@@ -385,7 +390,7 @@ void ar_frame_fill(*ArFrame frame, int flags) {
     frame.anchor_count = (int)_ar_anchors.size;
     frame.points = _ar_points.size > 0 ? &_ar_points.data[0] : null;
     frame.point_count = (int)_ar_points.size;
-    if ((flags & AR_FLAG_LIGHT) != 0 && ar_native_light(&values[0]) != 0) { ar_light_read(&values[0], &frame.light); }
+    if ((flags & (AR_FLAG_LIGHT | AR_FLAG_LIGHT_HDR)) != 0 && ar_native_light(&values[0]) != 0) { ar_light_read(&values[0], &frame.light); }
     int64[AR_DEPTH_INFO] depth;
     if ((flags & AR_FLAG_DEPTH) != 0 && ar_native_depth(&depth[0]) != 0) { ar_depth_read(&depth[0], &frame.depth); }
 }
@@ -402,6 +407,10 @@ void ar_light_read(*double info, *ArLight out) {
     out.main_intensity = ArVec3{(float)info[10], (float)info[11], (float)info[12]};
     out.has_harmonics = info[13] != 0.0;
     for (i in 0..27) { out.harmonics[i] = (float)info[14 + i]; }
+    // ARKit gives a temperature and no color: the color is the temperature's tint.
+    if (out.color.x == 0.0 && out.color.y == 0.0 && out.color.z == 0.0 && out.temperature > 0.0) {
+        out.color = ar_temperature_rgb(out.temperature);
+    }
 }
 
 // The depth values the native side filled, checked, as an ArDepth; left empty when they do
@@ -484,14 +493,14 @@ int ar_hit_test_ray(ArRay ray, int targets, *ArHit out, int max) {
 
 // Adds an anchor at `pose` (world space); returns its id, or 0 when the session is not
 // running. Its pose follows the world as tracking improves (frame.anchors).
-int64 ar_anchor_add(ArMat4 pose) { return ar_native_anchor_add(&pose.m[0], 0); }
+int64 ar_anchor_add(ArMat4 pose) { return (int64)ar_native_anchor_add(&pose.m[0], 0.0); }
 
 // Adds an anchor at a hit; on Android one on a plane is attached to the plane, so it moves
 // with it. Returns its id, or 0.
-int64 ar_anchor_add_hit(*ArHit hit) { return ar_native_anchor_add(&hit.pose.m[0], hit.plane); }
+int64 ar_anchor_add_hit(*ArHit hit) { return (int64)ar_native_anchor_add(&hit.pose.m[0], (double)hit.plane); }
 
 // Removes the anchor `id`; it is gone from the next frame.
-void ar_anchor_remove(int64 id) { ar_native_anchor_remove(id); }
+void ar_anchor_remove(int64 id) { ar_native_anchor_remove((double)id); }
 
 // The latest render's frame handler and the options it asked for, kept in the hook's slot.
 struct ArSessionHandler { fn(*ArFrame)->void handler; ArOptions options; bool asked; }

@@ -130,13 +130,13 @@ int ar_native_hit_test(*float ray, int targets, *double out, int max_hits) {
     return 1;
 }
 
-int64 ar_native_anchor_add(*float pose, int64 plane) {
+double ar_native_anchor_add(*float pose, double plane) {
     for (i in 0..16) { added_pose[i] = pose[i]; }
-    added_plane = plane;
-    return 42;
+    added_plane = (int64)plane;
+    return 42.0;
 }
 
-void ar_native_anchor_remove(int64 id) { removed = id; }
+void ar_native_anchor_remove(double id) { removed = (int64)id; }
 
 // A 64x48 NV12 picture turned 90 for portrait, an identity pose, intrinsics of 50 pixels.
 void lend_frame() {
