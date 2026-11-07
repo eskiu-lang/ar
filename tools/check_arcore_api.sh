@@ -1,8 +1,9 @@
 #!/bin/sh
 # Checks native/android/ar_api.h against ARCore itself, with no device: each function's
 # declaration and each value against Google's arcore_c_api.h (compiled with the NDK's clang,
-# warnings as errors), and each function's name against the symbols libarcore_sdk_c.so
-# exports. Downloads ARCore into a temporary directory (nothing is kept).
+# warnings as errors; the image database and augmented images too), that the header's own
+# types declare every function without Google's, and each function's name against the
+# symbols libarcore_sdk_c.so exports. Downloads ARCore into a temporary directory (nothing is kept).
 #
 #     tools/check_arcore_api.sh [VERSION]      (default 1.57.0; needs the Android NDK)
 set -eu
@@ -31,6 +32,16 @@ curl -fsSL -o "$work/core.aar" "https://dl.google.com/android/maven2/com/google/
 } > "$work/check.c"
 "$bin/clang" --target=aarch64-linux-android29 -std=c11 -Wall -Werror -Wincompatible-pointer-types \
   -I"$work" -c "$work/check.c" -o "$work/check.o"
+
+# Without Google's header: the package's own types are enough for every declaration, and
+# each enum type it stands in for is ARCore's 32-bit integer.
+{
+  echo "#include \"$root/native/android/ar_api.h\""
+  echo '#define X(result, name, params) result (*check_##name) params;'
+  echo 'AR_API'
+  grep -o 'typedef int32_t [A-Za-z]*;' "$root/native/android/ar_api.h" | sed 's/typedef int32_t \(.*\);/_Static_assert(sizeof(\1) == 4, "\1");/'
+} > "$work/alone.c"
+"$bin/clang" --target=aarch64-linux-android29 -std=c11 -Wall -Werror -c "$work/alone.c" -o "$work/alone.o"
 
 "$bin/llvm-nm" -D --defined-only "$work/jni/arm64-v8a/libarcore_sdk_c.so" | awk '{sub(/@.*/, "", $NF); print $NF}' | sort -u > "$work/exported"
 missing=0
