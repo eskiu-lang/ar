@@ -1,0 +1,168 @@
+// <ar/math> with no device: for many poses, intrinsics, rotations and viewports, a world
+// point projected with the view and projection matrices lands where the display transform
+// says its image pixel is shown, the ray under that point passes through it, and the
+// display transform and projection agree with the cover fit. Each check that fails exits
+// with 1.
+import <io>;
+import <libc>;
+import <math>;
+import <ar/math>;
+
+int failures;
+
+void check(bool ok, string what) {
+    if (!ok) {
+        printf("FAIL %s\n", what);
+        failures++;
+    }
+}
+
+bool near_eq(double a, double b, double tolerance) { return fabs(a - b) <= tolerance; }
+
+uint64 seed = 0x9E3779B97F4A7C15;
+
+// A number from -1 to 1 (xorshift).
+double rnd() {
+    seed ^= seed << 13;
+    seed ^= seed >> 7;
+    seed ^= seed << 17;
+    return (double)(seed >> 11) / 4503599627370496.0 - 1.0;
+}
+
+// A rotation from Euler angles, then a translation: a pose.
+ArMat4 pose(double yaw, double pitch, double roll, ArVec3 t) {
+    ArMat4 ry = ar_mat4_identity();
+    ry.m[0] = (float)cos(yaw); ry.m[2] = (float)-sin(yaw); ry.m[8] = (float)sin(yaw); ry.m[10] = (float)cos(yaw);
+    ArMat4 rx = ar_mat4_identity();
+    rx.m[5] = (float)cos(pitch); rx.m[6] = (float)sin(pitch); rx.m[9] = (float)-sin(pitch); rx.m[10] = (float)cos(pitch);
+    ArMat4 rz = ar_mat4_identity();
+    rz.m[0] = (float)cos(roll); rz.m[1] = (float)sin(roll); rz.m[4] = (float)-sin(roll); rz.m[5] = (float)cos(roll);
+    return ar_mat4_mul(ar_mat4_translation(t), ar_mat4_mul(ry, ar_mat4_mul(rx, rz)));
+}
+
+void test_basics() {
+    ArMat4 p = pose(0.7, -0.3, 1.1, ArVec3{1.0, 2.0, -3.0});
+    ArMat4 id = ar_mat4_mul(p, ar_mat4_rigid_inverse(p));
+    bool ok = true;
+    for (i in 0..16) {
+        double want = i % 5 == 0 ? 1.0 : 0.0;
+        if (!near_eq((double)id.m[i], want, 1e-5)) { ok = false; }
+    }
+    check(ok, "pose times its rigid inverse is the identity");
+    ArMat4 r = ar_mat4_rotation_z(90);
+    ArVec3 x = ar_mat4_direction(r, ArVec3{1.0, 0.0, 0.0});
+    check(x.x == 0.0 && x.y == 1.0, "rotation_z(90) turns x into y");
+    ArIntrinsics k = ArIntrinsics{500.0, 510.0, 330.0, 236.0, 640, 480};
+    ArIntrinsics u = k.upright(90);
+    check(u.width == 480 && u.height == 640 && u.fx == 510.0 && u.cx == 480.0 - 236.0 && u.cy == 330.0, "upright(90)");
+    ArIntrinsics back = k.upright(0);
+    check(back.fx == k.fx && back.cx == k.cx, "upright(0) is the same");
+    // A 640x480 image upright in portrait (480x640) on a 390x844 screen: height decides.
+    check(near_eq(ar_cover_scale(480, 640, 390.0, 844.0), 844.0 / 640.0, 1e-9), "cover scale");
+}
+
+// The viewport's center is the image's center for any rotation, and the corners of the
+// viewport fall inside the image (cover crops, never shows outside it).
+void test_display_transform() {
+    ArIntrinsics k = ArIntrinsics{1000.0, 1000.0, 960.0, 540.0, 1920, 1080};
+    int[4] rotations = {0, 90, 180, 270};
+    for (i in 0..4) {
+        int rot = rotations[i];
+        ArAffine t = k.display_transform(rot, 390.0, 844.0);
+        ArVec2 c = t.apply(0.5, 0.5);
+        check(near_eq((double)c.x, 0.5, 1e-5) && near_eq((double)c.y, 0.5, 1e-5), "display transform keeps the center");
+        for (corner in 0..4) {
+            ArVec2 q = t.apply((float)(corner & 1), (float)(corner >> 1));
+            check(q.x >= -1e-5 && q.x <= 1.00001 && q.y >= -1e-5 && q.y <= 1.00001, "a viewport corner is inside the image");
+        }
+    }
+    // Portrait phone (90): the viewport's top left is the image's bottom left as stored
+    // (x = 0 side of the sensor's landscape picture is the screen's top).
+    ArAffine t = k.display_transform(90, 1080.0, 1920.0);
+    ArVec2 tl = t.apply(0.0, 0.0);
+    check(near_eq((double)tl.x, 0.0, 1e-5) && near_eq((double)tl.y, 1.0, 1e-5), "portrait top left is the image's bottom left");
+    ArVec2 tr = t.apply(1.0, 0.0);
+    check(near_eq((double)tr.x, 0.0, 1e-5) && near_eq((double)tr.y, 0.0, 1e-5), "portrait top right is the image's top left");
+    // Landscape (0) with the same aspect: the identity.
+    ArAffine same = k.display_transform(0, 1920.0, 1080.0);
+    check(near_eq((double)same.a, 1.0, 1e-6) && near_eq((double)same.d, 1.0, 1e-6) && near_eq((double)same.tx, 0.0, 1e-6), "same aspect, no turn: identity");
+}
+
+// For random cameras and points: projection * view puts the point at the viewport pixel the
+// display transform maps to the point's image pixel, the depth is in 0..1 between near and
+// far, and the ray under that pixel passes through the point.
+void test_consistency() {
+    int[4] rotations = {0, 90, 180, 270};
+    int checked = 0;
+    for (n in 0..400) {
+        ArIntrinsics k = ArIntrinsics{(float)(900.0 + 300.0 * rnd()), 0.0, 0.0, 0.0, 1920, 1440};
+        k.fy = k.fx * (float)(1.0 + 0.01 * rnd());
+        k.cx = (float)(960.0 + 20.0 * rnd());
+        k.cy = (float)(720.0 + 20.0 * rnd());
+        if (n % 2 == 1) { k.width = 640; k.height = 480; k.fx = k.fx / 3.0; k.fy = k.fy / 3.0; k.cx = k.cx / 3.0; k.cy = k.cy / 3.0; }
+        ArMat4 camera = pose(3.0 * rnd(), rnd(), 3.0 * rnd(), ArVec3{(float)rnd(), (float)rnd(), (float)rnd()});
+        int rot = rotations[n % 4];
+        double vw = n % 3 == 0 ? 390.0 : (n % 3 == 1 ? 1024.0 : 600.0);
+        double vh = n % 3 == 0 ? 844.0 : (n % 3 == 1 ? 768.0 : 600.0);
+        // A point in front of the camera, inside the visible part.
+        ArVec3 local = ArVec3{(float)(0.3 * rnd()), (float)(0.3 * rnd()), (float)(-1.0 - rnd() * 0.9)};
+        ArVec3 world = ar_mat4_point(camera, local);
+        ArVec3 img = k.world_to_image(camera, world);
+        ArMat4 vp = ar_mat4_mul(k.projection(rot, vw, vh, 0.1, 100.0), ar_view_matrix(camera, rot));
+        ArVec3 ndc = ar_mat4_project(vp, world);
+        double px = ((double)ndc.x + 1.0) / 2.0 * vw;
+        double py = (1.0 - (double)ndc.y) / 2.0 * vh;
+        if (px < 0.0 || px > vw || py < 0.0 || py > vh) { continue; }
+        checked++;
+        ArVec2 back = k.view_to_image(rot, vw, vh, px, py);
+        check(near_eq((double)back.x, (double)img.x, 0.05) && near_eq((double)back.y, (double)img.y, 0.05), "projection agrees with the display transform");
+        ArAffine t = k.display_transform(rot, vw, vh);
+        ArVec2 norm = t.apply((float)(px / vw), (float)(py / vh));
+        check(near_eq((double)norm.x * k.width, (double)img.x, 0.05) && near_eq((double)norm.y * k.height, (double)img.y, 0.05), "affine display transform agrees");
+        check(ndc.z > 0.0 && ndc.z < 1.0, "depth between near and far");
+        ArRay ray = k.ray(camera, rot, vw, vh, px, py);
+        ArVec3 to = ArVec3{world.x - ray.origin.x, world.y - ray.origin.y, world.z - ray.origin.z};
+        double along = (double)to.x * ray.direction.x + (double)to.y * ray.direction.y + (double)to.z * ray.direction.z;
+        ArVec3 off = ArVec3{(float)(to.x - along * ray.direction.x), (float)(to.y - along * ray.direction.y), (float)(to.z - along * ray.direction.z)};
+        check(along > 0.0 && (double)ar_vec3_length(off) < 1e-4, "the ray passes through the point");
+        check(near_eq((double)ar_vec3_length(ray.direction), 1.0, 1e-5), "the ray's direction is a unit vector");
+    }
+    check(checked > 100, "enough points were on screen");
+}
+
+// Near and far map to depth 0 and 1; a point on the optical axis lands on the principal
+// point.
+void test_projection() {
+    ArIntrinsics k = ArIntrinsics{1500.0, 1500.0, 960.0, 720.0, 1920, 1440};
+    ArMat4 p = k.projection(0, 1920.0, 1440.0, 0.1, 50.0);
+    ArVec3 a = ar_mat4_project(p, ArVec3{0.0, 0.0, -0.1});
+    ArVec3 b = ar_mat4_project(p, ArVec3{0.0, 0.0, -50.0});
+    check(near_eq((double)a.z, 0.0, 1e-5) && near_eq((double)b.z, 1.0, 1e-5), "depth 0 at near, 1 at far");
+    check(near_eq((double)a.x, 0.0, 1e-6) && near_eq((double)a.y, 0.0, 1e-6), "the principal point at the center");
+    // The vertical field of view of a 1440-pixel-high image at f = 1500.
+    ArVec3 top = ar_mat4_project(p, ArVec3{0.0, (float)(720.0 / 1500.0), -1.0});
+    check(near_eq((double)top.y, 1.0, 1e-5), "the image's top edge at y = 1");
+}
+
+void test_temperature() {
+    ArVec3 white = ar_temperature_rgb(6500.0);
+    check(near_eq((double)white.x, 1.0, 1e-6) && near_eq((double)white.y, 1.0, 1e-6) && near_eq((double)white.z, 1.0, 1e-6), "6500 K is white");
+    ArVec3 warm = ar_temperature_rgb(2700.0);
+    check(warm.x > warm.y && warm.y > warm.z, "2700 K is warm");
+    ArVec3 cool = ar_temperature_rgb(10000.0);
+    check(cool.z > cool.x, "10000 K is cool");
+}
+
+int main() {
+    test_basics();
+    test_display_transform();
+    test_consistency();
+    test_projection();
+    test_temperature();
+    if (failures > 0) {
+        printf("%d failures\n", failures);
+        return 1;
+    }
+    printf("math: ok\n");
+    return 0;
+}

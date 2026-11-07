@@ -1,0 +1,265 @@
+// <ar/math>: the geometry of an AR frame, the same on every platform. From the camera
+// image's intrinsics, the camera's pose and how far the image turns to be upright, it gives
+// the view and projection matrices for a viewport, the display transform from the viewport
+// to the image, and the ray under a point of the viewport (docs/math.md). Matrices are 4x4,
+// column major, with the layout of eskiu-gpu's Mat4, so a pointer to one casts to the other.
+import <libc>;
+import <math>;
+
+// A point or size in two dimensions.
+struct ArVec2 { float x; float y; }
+
+// A point or direction in three dimensions, in meters in world space.
+struct ArVec3 { float x; float y; float z; }
+
+// A 4x4 matrix in column-major order: m[c * 4 + r] is row r of column c, so the translation
+// is m[12], m[13], m[14]. The layout of eskiu-gpu's Mat4 and WGSL's mat4x4<f32>.
+struct ArMat4 { float[16] m; }
+
+// A 2D affine transform: (x, y) becomes (a * x + c * y + tx, b * x + d * y + ty), the
+// convention of Core Graphics' CGAffineTransform.
+struct ArAffine { float a; float b; float c; float d; float tx; float ty; }
+
+// A camera image's intrinsics, in pixels of that image as the sensor gives it: focal
+// lengths, principal point (from the top left corner), and the image's size.
+struct ArIntrinsics { float fx; float fy; float cx; float cy; int width; int height; }
+
+// A ray in world space: from `origin`, along the unit vector `direction`.
+struct ArRay { ArVec3 origin; ArVec3 direction; }
+
+// The identity matrix.
+ArMat4 ar_mat4_identity() {
+    ArMat4 r;
+    r.m[0] = 1.0;
+    r.m[5] = 1.0;
+    r.m[10] = 1.0;
+    r.m[15] = 1.0;
+    return r;
+}
+
+// a * b: b is applied first.
+ArMat4 ar_mat4_mul(ArMat4 a, ArMat4 b) {
+    ArMat4 r;
+    for (c in 0..4) {
+        for (row in 0..4) {
+            double sum = 0.0;
+            for (k in 0..4) { sum += (double)a.m[k * 4 + row] * (double)b.m[c * 4 + k]; }
+            r.m[c * 4 + row] = (float)sum;
+        }
+    }
+    return r;
+}
+
+// The inverse of a rigid transform (a rotation and a translation, as poses are): the
+// transposed rotation and the translation taken back through it.
+ArMat4 ar_mat4_rigid_inverse(ArMat4 m) {
+    ArMat4 r = ar_mat4_identity();
+    for (c in 0..3) {
+        for (row in 0..3) { r.m[c * 4 + row] = m.m[row * 4 + c]; }
+    }
+    for (row in 0..3) {
+        double t = 0.0;
+        for (k in 0..3) { t -= (double)r.m[k * 4 + row] * (double)m.m[12 + k]; }
+        r.m[12 + row] = (float)t;
+    }
+    return r;
+}
+
+// The point `p` through `m` (w = 1, no division).
+ArVec3 ar_mat4_point(ArMat4 m, ArVec3 p) {
+    return ArVec3{m.m[0] * p.x + m.m[4] * p.y + m.m[8] * p.z + m.m[12],
+                  m.m[1] * p.x + m.m[5] * p.y + m.m[9] * p.z + m.m[13],
+                  m.m[2] * p.x + m.m[6] * p.y + m.m[10] * p.z + m.m[14]};
+}
+
+// The direction `d` through `m`'s rotation (w = 0).
+ArVec3 ar_mat4_direction(ArMat4 m, ArVec3 d) {
+    return ArVec3{m.m[0] * d.x + m.m[4] * d.y + m.m[8] * d.z,
+                  m.m[1] * d.x + m.m[5] * d.y + m.m[9] * d.z,
+                  m.m[2] * d.x + m.m[6] * d.y + m.m[10] * d.z};
+}
+
+// The point `p` through `m` (a projection times a view), divided by w: normalized device
+// coordinates, x and y from -1 to 1 (y up), z from 0 at the near plane to 1 at the far one.
+ArVec3 ar_mat4_project(ArMat4 m, ArVec3 p) {
+    double w = (double)m.m[3] * p.x + (double)m.m[7] * p.y + (double)m.m[11] * p.z + (double)m.m[15];
+    ArVec3 c = ar_mat4_point(m, p);
+    if (w == 0.0) { return c; }
+    return ArVec3{(float)(c.x / w), (float)(c.y / w), (float)(c.z / w)};
+}
+
+// The translation of `m`: a pose's position.
+ArVec3 ar_mat4_position(ArMat4 m) { return ArVec3{m.m[12], m.m[13], m.m[14]}; }
+
+// A translation by `t`.
+ArMat4 ar_mat4_translation(ArVec3 t) {
+    ArMat4 r = ar_mat4_identity();
+    r.m[12] = t.x;
+    r.m[13] = t.y;
+    r.m[14] = t.z;
+    return r;
+}
+
+// A rotation about the z axis by `degrees`, counterclockwise looking down -z.
+ArMat4 ar_mat4_rotation_z(int degrees) {
+    ArMat4 r = ar_mat4_identity();
+    double a = (double)degrees * 3.14159265358979323846 / 180.0;
+    double c = cos(a);
+    double s = sin(a);
+    // Exact for the quarter turns the display uses.
+    if (degrees % 90 == 0) {
+        int q = ((degrees / 90) % 4 + 4) % 4;
+        c = q == 0 ? 1.0 : (q == 2 ? -1.0 : 0.0);
+        s = q == 1 ? 1.0 : (q == 3 ? -1.0 : 0.0);
+    }
+    r.m[0] = (float)c;
+    r.m[1] = (float)s;
+    r.m[4] = (float)-s;
+    r.m[5] = (float)c;
+    return r;
+}
+
+// The length of `v`.
+float ar_vec3_length(ArVec3 v) { return (float)sqrt((double)v.x * v.x + (double)v.y * v.y + (double)v.z * v.z); }
+
+// `v` scaled to length 1 (unchanged when it is zero).
+ArVec3 ar_vec3_normalize(ArVec3 v) {
+    double l = (double)ar_vec3_length(v);
+    if (l == 0.0) { return v; }
+    return ArVec3{(float)(v.x / l), (float)(v.y / l), (float)(v.z / l)};
+}
+
+// The intrinsics of the image once turned `rotation` degrees clockwise (0, 90, 180 or 270),
+// as the screen shows it: width and height swap for 90 and 270, the focal lengths with them.
+ArIntrinsics ArIntrinsics_upright(*ArIntrinsics self, int rotation) {
+    float w = (float)self.width;
+    float h = (float)self.height;
+    if (rotation == 90) {
+        return ArIntrinsics{self.fy, self.fx, h - self.cy, self.cx, self.height, self.width};
+    }
+    if (rotation == 180) {
+        return ArIntrinsics{self.fx, self.fy, w - self.cx, h - self.cy, self.width, self.height};
+    }
+    if (rotation == 270) {
+        return ArIntrinsics{self.fy, self.fx, self.cy, w - self.cx, self.height, self.width};
+    }
+    return *self;
+}
+
+// How much the upright image is scaled to cover a viewport of `width` x `height` (aspect
+// fill: the image fills it and what overflows is cropped about the center).
+double ar_cover_scale(int upright_width, int upright_height, double width, double height) {
+    double sx = width / (double)upright_width;
+    double sy = height / (double)upright_height;
+    return sx > sy ? sx : sy;
+}
+
+// The point (x, y) of a viewport `width` x `height` (in any unit, from the top left) as a
+// pixel of the image as the sensor gives it, when the image is turned `rotation` degrees
+// clockwise and covers the viewport.
+ArVec2 ArIntrinsics_view_to_image(*ArIntrinsics self, int rotation, double width, double height, double x, double y) {
+    ArIntrinsics up = self.upright(rotation);
+    double s = ar_cover_scale(up.width, up.height, width, height);
+    double ux = (x - width / 2.0) / s + (double)up.width / 2.0;
+    double uy = (y - height / 2.0) / s + (double)up.height / 2.0;
+    double w = (double)self.width;
+    double h = (double)self.height;
+    if (rotation == 90) { return ArVec2{(float)uy, (float)(h - ux)}; }
+    if (rotation == 180) { return ArVec2{(float)(w - ux), (float)(h - uy)}; }
+    if (rotation == 270) { return ArVec2{(float)(w - uy), (float)ux}; }
+    return ArVec2{(float)ux, (float)uy};
+}
+
+// The display transform for a viewport `width` x `height`: from normalized viewport
+// coordinates (0 to 1 from the top left) to normalized image coordinates (0 to 1 of the
+// image as the sensor gives it), for an image turned `rotation` degrees that covers the
+// viewport. It is where a background shader samples the camera image.
+ArAffine ArIntrinsics_display_transform(*ArIntrinsics self, int rotation, double width, double height) {
+    double w = (double)self.width;
+    double h = (double)self.height;
+    ArVec2 o = self.view_to_image(rotation, width, height, 0.0, 0.0);
+    ArVec2 ex = self.view_to_image(rotation, width, height, width, 0.0);
+    ArVec2 ey = self.view_to_image(rotation, width, height, 0.0, height);
+    return ArAffine{(float)((ex.x - o.x) / w), (float)((ex.y - o.y) / h),
+                    (float)((ey.x - o.x) / w), (float)((ey.y - o.y) / h),
+                    (float)(o.x / w), (float)(o.y / h)};
+}
+
+// (x, y) through the affine transform.
+ArVec2 ArAffine_apply(*ArAffine self, float x, float y) {
+    return ArVec2{self.a * x + self.c * y + self.tx, self.b * x + self.d * y + self.ty};
+}
+
+// The projection for a viewport `width` x `height`: a camera with the image's intrinsics,
+// turned upright by `rotation` and covering the viewport, right handed (looking down -z,
+// y up), depth from 0 at `near` to 1 at `far` as WebGPU and Metal take it.
+ArMat4 ArIntrinsics_projection(*ArIntrinsics self, int rotation, double width, double height, double near, double far) {
+    ArIntrinsics up = self.upright(rotation);
+    double s = ar_cover_scale(up.width, up.height, width, height);
+    double fx = (double)up.fx * s;
+    double fy = (double)up.fy * s;
+    double cx = ((double)up.cx - (double)up.width / 2.0) * s + width / 2.0;
+    double cy = ((double)up.cy - (double)up.height / 2.0) * s + height / 2.0;
+    ArMat4 r;
+    r.m[0] = (float)(2.0 * fx / width);
+    r.m[5] = (float)(2.0 * fy / height);
+    r.m[8] = (float)(1.0 - 2.0 * cx / width);
+    r.m[9] = (float)(2.0 * cy / height - 1.0);
+    r.m[10] = (float)(far / (near - far));
+    r.m[11] = -1.0;
+    r.m[14] = (float)(near * far / (near - far));
+    return r;
+}
+
+// The view matrix (world to camera) for a camera whose pose `camera` (camera to world, x
+// right and y up along the image as the sensor gives it) is shown turned `rotation` degrees
+// clockwise: x right and y up as the screen shows the picture.
+ArMat4 ar_view_matrix(ArMat4 camera, int rotation) {
+    return ar_mat4_rigid_inverse(ar_mat4_mul(camera, ar_mat4_rotation_z(rotation)));
+}
+
+// The ray from the camera through the point (x, y) of a viewport `width` x `height` (from
+// the top left) that the image covers turned `rotation` degrees.
+ArRay ArIntrinsics_ray(*ArIntrinsics self, ArMat4 camera, int rotation, double width, double height, double x, double y) {
+    ArVec2 p = self.view_to_image(rotation, width, height, x, y);
+    ArVec3 d = ArVec3{(float)(((double)p.x - self.cx) / self.fx), (float)(-((double)p.y - self.cy) / self.fy), -1.0};
+    return ArRay{ar_mat4_position(camera), ar_vec3_normalize(ar_mat4_direction(camera, d))};
+}
+
+// The pixel of the image (as the sensor gives it) where the world point `p` appears, for a
+// camera at pose `camera`; z is the distance in front of the camera (negative behind it).
+ArVec3 ArIntrinsics_world_to_image(*ArIntrinsics self, ArMat4 camera, ArVec3 p) {
+    ArVec3 c = ar_mat4_point(ar_mat4_rigid_inverse(camera), p);
+    double depth = -(double)c.z;
+    if (depth == 0.0) { return ArVec3{0.0, 0.0, 0.0}; }
+    return ArVec3{(float)((double)self.fx * c.x / depth + self.cx), (float)((double)self.cy - (double)self.fy * c.y / depth), (float)depth};
+}
+
+// The RGB tint of light at a color temperature in kelvin, scaled so 6500 K is white (1, 1,
+// 1): ARKit's ambientColorTemperature as a color. Tanner Helland's fit of the blackbody
+// colors, good to a few percent from 1000 to 40000 K.
+ArVec3 ar_temperature_rgb(float kelvin) {
+    double t = (double)kelvin / 100.0;
+    if (t < 10.0) { t = 10.0; }
+    if (t > 400.0) { t = 400.0; }
+    double r = 255.0;
+    double g = 0.0;
+    double b = 255.0;
+    if (t > 66.0) {
+        r = 329.698727446 * pow(t - 60.0, -0.1332047592);
+        g = 288.1221695283 * pow(t - 60.0, -0.0755148492);
+    } else {
+        g = 99.4708025861 * log(t) - 161.1195681661;
+    }
+    if (t < 66.0) {
+        b = t <= 19.0 ? 0.0 : 138.5177312231 * log(t - 10.0) - 305.0447927307;
+    }
+    // The fit's value at 6500 K, so that one is white.
+    double r0 = 255.0;
+    double g0 = 99.4708025861 * log(65.0) - 161.1195681661;
+    double b0 = 138.5177312231 * log(55.0) - 305.0447927307;
+    if (r < 0.0) { r = 0.0; }
+    if (g < 0.0) { g = 0.0; }
+    if (b < 0.0) { b = 0.0; }
+    return ArVec3{(float)(r / r0), (float)(g / g0), (float)(b / b0)};
+}
