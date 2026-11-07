@@ -3,7 +3,9 @@
 // "ar_frame" channel when none is waiting; ar_native_frame_acquire lends it to Eskiu: the
 // capturedImage (NV12, full range) by pointer with its base address locked read-only, the
 // camera's pose and intrinsics, and while it is lent its planes, anchors, points, light and
-// depth. Status goes to the "ar" channel. The layouts are src/ar.esk's.
+// depth. Image targets become ARReferenceImages (named by their index), each validated
+// before the session looks for it; found ones are ARImageAnchors. Status goes to the "ar"
+// channel. The layouts are src/ar.esk's.
 #import <ARKit/ARKit.h>
 #import <os/lock.h>
 #import "ui_native.h"
@@ -16,7 +18,16 @@ static void emit(const char *status) { ui_native_emit("ar", status); }
 static ARSession *session;
 static EskiuArDelegate *delegate;
 static int sessionFlags;
+static int sessionWidth, sessionHeight;
 static bool running;
+
+// The image targets: an ARReferenceImage (or NSNull when refused) and an ArImageState for
+// each, how many ARKit follows at once, and a generation that tells a validation of an
+// older set to stop.
+static NSMutableArray *targets;
+static NSMutableArray<NSNumber *> *targetStates;
+static int trackedMax;
+static int targetGeneration;
 
 // The newest frame and whether "frame" was posted since the last acquire, under frameLock.
 static os_unfair_lock frameLock = OS_UNFAIR_LOCK_INIT;
@@ -30,11 +41,13 @@ static CVPixelBufferRef lentImage;
 static CVPixelBufferRef lentDepth;
 static NSArray<ARPlaneAnchor *> *lentPlanes;
 static NSArray<ARAnchor *> *lentAnchors;
+static NSArray<ARImageAnchor *> *lentImages;
 
 // Ids Eskiu sees: planes by their anchor's identifier, the app's anchors both ways.
 static NSMutableDictionary<NSUUID *, NSNumber *> *planeIds;
 static NSMutableDictionary<NSUUID *, NSNumber *> *anchorIds;
 static NSMutableDictionary<NSNumber *, ARAnchor *> *anchorsById;
+static NSMutableDictionary<NSUUID *, NSNumber *> *imageIds;
 static int64_t nextId = 1;
 
 @implementation EskiuArDelegate
@@ -92,6 +105,39 @@ static ARVideoFormat *videoFormat(int width, int height) {
 
 void ar_native_frame_release(void);
 
+// Runs the session with the current flags, picture size and the image targets validated so
+// far. A session that runs already keeps its world.
+static void runConfiguration(void) {
+    ARWorldTrackingConfiguration *config = [ARWorldTrackingConfiguration new];
+    ARPlaneDetection planes = ARPlaneDetectionNone;
+    if (sessionFlags & 1) planes |= ARPlaneDetectionHorizontal;
+    if (sessionFlags & 2) planes |= ARPlaneDetectionVertical;
+    config.planeDetection = planes;
+    config.lightEstimationEnabled = (sessionFlags & (4 | 32)) != 0;
+    if ((sessionFlags & 8) && [ARWorldTrackingConfiguration supportsFrameSemantics:ARFrameSemanticSceneDepth]) {
+        config.frameSemantics = ARFrameSemanticSceneDepth;
+    }
+    ARVideoFormat *format = videoFormat(sessionWidth, sessionHeight);
+    if (format) config.videoFormat = format;
+    if (sessionFlags & 64) {
+        NSMutableSet<ARReferenceImage *> *ready = [NSMutableSet new];
+        for (NSUInteger i = 0; i < targets.count; i++)
+            if (targetStates[i].intValue == 1 && [targets[i] isKindOfClass:ARReferenceImage.class]) [ready addObject:targets[i]];
+        config.detectionImages = ready;
+        config.maximumNumberOfTrackedImages = MIN((NSInteger)trackedMax, (NSInteger)ready.count);
+    }
+    // A new session starts from scratch; new options on a running one keep the world.
+    ARSessionRunOptions options = running ? 0 : ARSessionRunOptionResetTracking | ARSessionRunOptionRemoveExistingAnchors;
+    if (!running) {
+        [planeIds removeAllObjects];
+        [anchorIds removeAllObjects];
+        [anchorsById removeAllObjects];
+        [imageIds removeAllObjects];
+    }
+    running = true;
+    [session runWithConfiguration:config options:options];
+}
+
 void ar_native_session(int on, int flags, int width, int height) {
     if (!on) {
         ar_native_frame_release();
@@ -114,29 +160,72 @@ void ar_native_session(int on, int flags, int width, int height) {
         planeIds = [NSMutableDictionary new];
         anchorIds = [NSMutableDictionary new];
         anchorsById = [NSMutableDictionary new];
-    }
-    ARWorldTrackingConfiguration *config = [ARWorldTrackingConfiguration new];
-    ARPlaneDetection planes = ARPlaneDetectionNone;
-    if (flags & 1) planes |= ARPlaneDetectionHorizontal;
-    if (flags & 2) planes |= ARPlaneDetectionVertical;
-    config.planeDetection = planes;
-    config.lightEstimationEnabled = (flags & (4 | 32)) != 0;
-    if ((flags & 8) && [ARWorldTrackingConfiguration supportsFrameSemantics:ARFrameSemanticSceneDepth]) {
-        config.frameSemantics = ARFrameSemanticSceneDepth;
-    }
-    ARVideoFormat *format = videoFormat(width, height);
-    if (format) config.videoFormat = format;
-    // A new session starts from scratch; new options on a running one keep the world.
-    ARSessionRunOptions options = running ? 0 : ARSessionRunOptionResetTracking | ARSessionRunOptionRemoveExistingAnchors;
-    if (!running) {
-        [planeIds removeAllObjects];
-        [anchorIds removeAllObjects];
-        [anchorsById removeAllObjects];
+        imageIds = [NSMutableDictionary new];
     }
     sessionFlags = flags;
-    running = true;
-    [session runWithConfiguration:config options:options];
+    sessionWidth = width;
+    sessionHeight = height;
+    runConfiguration();
     emit("running");
+}
+
+void ar_native_images(int count, int tracked) {
+    targetGeneration++;
+    targets = [NSMutableArray new];
+    targetStates = [NSMutableArray new];
+    for (int i = 0; i < count; i++) {
+        [targets addObject:NSNull.null];
+        [targetStates addObject:@2];
+    }
+    trackedMax = tracked;
+}
+
+// A gray picture (copied) or the file at `path` as a CGImage; NULL when neither gives one.
+static CGImageRef targetImage(const uint8_t *gray, int width, int height, const char *path) {
+    if (gray && width > 0 && height > 0) {
+        CFDataRef data = CFDataCreate(NULL, gray, (CFIndex)width * height);
+        CGDataProviderRef provider = CGDataProviderCreateWithCFData(data);
+        CGColorSpaceRef space = CGColorSpaceCreateDeviceGray();
+        CGImageRef image = CGImageCreate(width, height, 8, 8, width, space, (CGBitmapInfo)kCGImageAlphaNone, provider, NULL,
+                                         false, kCGRenderingIntentDefault);
+        CGColorSpaceRelease(space);
+        CGDataProviderRelease(provider);
+        CFRelease(data);
+        return image;
+    }
+    if (!path) return NULL;
+    UIImage *file = [UIImage imageWithContentsOfFile:[NSString stringWithUTF8String:path]];
+    return file.CGImage ? CGImageRetain(file.CGImage) : NULL;
+}
+
+// Makes target `index` an ARReferenceImage and validates it (ARKit refuses an image with too
+// few features); when the last one of the set is validated, a running session looks for
+// the valid ones.
+void ar_native_image_add(int index, uint8_t *gray, int width, int height, const char *path, double physical_width) {
+    if (index < 0 || index >= (int)targets.count) return;
+    CGImageRef image = physical_width > 0 ? targetImage(gray, width, height, path) : NULL;
+    if (!image) return;
+    ARReferenceImage *reference = [[ARReferenceImage alloc] initWithCGImage:image orientation:kCGImagePropertyOrientationUp
+                                                             physicalWidth:physical_width];
+    CGImageRelease(image);
+    reference.name = [NSString stringWithFormat:@"%d", index];
+    targets[index] = reference;
+    targetStates[index] = @0;
+    int generation = targetGeneration;
+    [reference validateWithCompletionHandler:^(NSError *error) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (generation != targetGeneration) return;
+            targetStates[index] = error ? @2 : @1;
+            for (NSNumber *state in targetStates)
+                if (state.intValue == 0) return;
+            if (running && (sessionFlags & 64)) runConfiguration();
+        });
+    }];
+}
+
+int ar_native_image_state(int index) {
+    if (index < 0 || index >= (int)targetStates.count) return 2;
+    return targetStates[index].intValue;
 }
 
 static void putMatrix(double *out, simd_float4x4 m) {
@@ -206,12 +295,15 @@ int ar_native_frame_acquire(int64_t *image, double *camera) {
     camera[23] = cam.imageResolution.height;
     NSMutableArray<ARPlaneAnchor *> *planes = [NSMutableArray new];
     NSMutableArray<ARAnchor *> *anchors = [NSMutableArray new];
+    NSMutableArray<ARImageAnchor *> *images = [NSMutableArray new];
     for (ARAnchor *anchor in frame.anchors) {
         if ([anchor isKindOfClass:ARPlaneAnchor.class]) [planes addObject:(ARPlaneAnchor *)anchor];
+        else if ([anchor isKindOfClass:ARImageAnchor.class]) [images addObject:(ARImageAnchor *)anchor];
         else if (anchorIds[anchor.identifier]) [anchors addObject:anchor];
     }
     lentPlanes = planes;
     lentAnchors = anchors;
+    lentImages = images;
     return 1;
 }
 
@@ -229,6 +321,7 @@ void ar_native_frame_release(void) {
     lent = nil;
     lentPlanes = nil;
     lentAnchors = nil;
+    lentImages = nil;
 }
 
 int ar_native_plane_count(void) { return (int)lentPlanes.count; }
@@ -281,6 +374,31 @@ void ar_native_anchor(int index, double *info) {
     info[0] = (double)anchorIds[anchor.identifier].longLongValue;
     info[1] = trackingOf(lent.camera);
     putMatrix(&info[2], anchor.transform);
+}
+
+int ar_native_tracked_image_count(void) { return (int)lentImages.count; }
+
+// An image anchor: tracked now (full), or where it was last seen (last known). Its pose is
+// the image's center, x to its right, z toward its bottom, y out of its face; the size is
+// the reference image's, scaled as ARKit estimates it.
+void ar_native_tracked_image(int index, double *info) {
+    for (int i = 0; i < 22; i++) info[i] = 0;
+    if (index < 0 || index >= (int)lentImages.count) return;
+    ARImageAnchor *anchor = lentImages[index];
+    NSNumber *id = imageIds[anchor.identifier];
+    if (!id) {
+        id = @(nextId++);
+        imageIds[anchor.identifier] = id;
+    }
+    info[0] = id.doubleValue;
+    info[1] = anchor.referenceImage.name ? anchor.referenceImage.name.intValue : -1;
+    info[2] = anchor.isTracked ? trackingOf(lent.camera) : 1;
+    info[3] = anchor.isTracked ? 1 : 2;
+    putMatrix(&info[4], anchor.transform);
+    CGSize size = anchor.referenceImage.physicalSize;
+    CGFloat scale = anchor.estimatedScaleFactor > 0 ? anchor.estimatedScaleFactor : 1;
+    info[20] = size.width * scale;
+    info[21] = size.height * scale;
 }
 
 int ar_native_points(float *out, int max_points) {
