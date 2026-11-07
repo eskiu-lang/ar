@@ -2,19 +2,23 @@
 // Android. use_ar_session runs a world-tracking session while its scope is mounted and hands
 // each new frame to Eskiu on the UI thread: the camera picture as YUV planes (the layout of
 // ui-camera's CameraFrame, which eskiu-gpu's <gpu/yuv> draws), the camera's pose and
-// intrinsics, planes, anchors, feature points, the light estimate and depth. The geometry
-// (view, projection, display transform, hit-test ray) is computed in <ar/math>, the same on
-// both platforms. The web has no AR in this version (ArUnsupported).
+// intrinsics, planes, anchors, image targets, feature points, the light estimate and depth.
+// The geometry (view, projection, display transform, hit-test ray) is computed in <ar/math>,
+// the same on every platform. On the web the session is WebXR's immersive-ar (Chrome on Android), where
+// the browser draws the camera itself (frame.has_image) and other browsers report
+// ArUnsupported.
 import <string>;
 import <list>;
 import <ui>;
 import <ar/math>;
 
 // Where the session is: starting (asking for the camera, installing ARCore), running, or
-// why it is not: the device has no AR (or it is the simulator, or the browser), the camera
-// permission is denied, ARCore is being installed (the session starts when it is), it
-// failed, or it is paused while the app is in the background.
-enum ArStatus { ArStarting, ArRunning, ArUnsupported, ArDenied, ArInstalling, ArFailed, ArPaused }
+// why it is not: the device has no AR (or it is the simulator, or a browser without WebXR
+// AR), the camera permission is denied, ARCore is being installed (the session starts when
+// it is), it failed, it is paused while the app is in the background, or (the web) the
+// browser waits for a tap: it starts an immersive session only from one, and the next tap
+// anywhere on the page starts it.
+enum ArStatus { ArStarting, ArRunning, ArUnsupported, ArDenied, ArInstalling, ArFailed, ArPaused, ArWaitingForTap }
 
 // How well the camera is tracked: not at all (its pose means nothing), limited (the pose is
 // rough; `reason` says why), or normal.
@@ -51,11 +55,36 @@ const int AR_HIT_ESTIMATED = 2;
 const int AR_HIT_PLANE = 1;
 const int AR_HIT_ESTIMATE = 2;
 
+// How the pixels of an ArImageTarget are laid out: one 8-bit gray value each, or 8-bit red,
+// green, blue and alpha.
+enum ArPixelFormat { ArPixelsGray8, ArPixelsRGBA8 }
+
+// A picture for the session to find in the world (a poster, a cover, a label): its `name`,
+// either its pixels (`width` x `height` in `format`, `row_stride` bytes from one row to the
+// next, 0 for tight rows) or a PNG or JPEG file at `path` (a file of the app's assets/, as
+// ui_asset_path finds it, or an absolute path; a URL on the web), and how wide it is in the
+// world, in meters (needed: ARKit takes no image without it, and ARCore finds the image's
+// pose sooner with it). The platforms track the image's features in gray: give it detail and
+// contrast (ar_image_state says when one is refused). Copied when the session gets it.
+struct ArImageTarget {
+    string name;
+    *uint8 pixels;
+    int width;
+    int height;
+    int format;
+    int row_stride;
+    string path;
+    float physical_width;
+}
+
 // What use_ar_session asks for: plane detection (horizontal, vertical), the light estimate
 // (`light_hdr` asks ARCore for its environmental HDR estimate instead: main light and
 // spherical harmonics; iOS ignores it), depth where the device has it (LiDAR on iOS, the
-// Depth API on Android), the feature points, and the size of the camera picture (a wish: the
-// platform gives the nearest it has, as the sensor sees it, landscape).
+// Depth API on Android), the feature points, the size of the camera picture (a wish: the
+// platform gives the nearest it has, as the sensor sees it, landscape), and image targets:
+// `image_count` pictures at `images` to find (frame.images), of which ARKit follows
+// `tracked_images` as they move (the others keep the pose where they were last seen; ARCore
+// follows every one). The targets are copied when they change: a new array, count or field.
 struct ArOptions {
     bool horizontal = true;
     bool vertical = false;
@@ -65,6 +94,9 @@ struct ArOptions {
     bool points = false;
     int image_width = 1280;
     int image_height = 720;
+    *ArImageTarget images;
+    int image_count;
+    int tracked_images = 1;
 }
 
 // One plane of the camera picture: `data` (borrowed for the handler's call), the bytes from
@@ -73,8 +105,9 @@ struct ArOptions {
 struct ArImagePlane { *uint8 data; int row_stride; int pixel_stride; int64 size; }
 
 // The camera picture, with the field layout of ui-camera's CameraFrame and eskiu-gpu's
-// GpuYuvImage, so `(*GpuYuvImage)&frame.image` uploads it: size, format (0 NV12 on iOS, 0
-// NV12, 1 NV21, 2 I420 or 3 three-plane YUV on Android), the planes, how far to turn it
+// GpuYuvImage, so `(*GpuYuvImage)&frame.image` uploads it: size, format (0 NV12 on iOS and
+// Android, 4 RGBA in one plane on the web with WebXR raw camera access; 1 NV21, 2 I420 and
+// 3 three-plane YUV are the layouts CameraFrame also knows), the planes, how far to turn it
 // clockwise to be upright on the screen, the capture time, and its YUV matrix (0 BT.601)
 // and range.
 struct ArCameraImage {
@@ -152,11 +185,39 @@ struct ArDepth { int width; int height; int format; int row_stride; *uint8 data;
 // surface's normal).
 struct ArHit { float distance; int kind; int64 plane; ArMat4 pose; }
 
+// How an image target is followed: not at all, fully (its pose follows the picture as it
+// moves), or at the pose where it was last seen (it is out of view, or ARKit follows other
+// images: ArOptions.tracked_images).
+enum ArImageMethod { ArImageNotTracking, ArImageFull, ArImageLastKnown }
+
+// Where an image target stands: being prepared, ready to be found, or refused (no pixels or
+// file, a file that does not decode, no physical width, or too few features to track).
+enum ArImageState { ArImagePending, ArImageReady, ArImageRejected }
+
+// An image target found in the world: an id that stays while it is known, the index of its
+// ArImageTarget in ArOptions.images and its name (borrowed for the handler's call), how well
+// it is tracked (an ArTracking) and how (an ArImageMethod), the pose of its center (x to the
+// picture's right, z toward its bottom, y out of its face) and its size in meters along x
+// and z, as the platform estimates it.
+struct ArTrackedImage {
+    int64 id;
+    int index;
+    string name;
+    int tracking;
+    int method;
+    ArMat4 pose;
+    float extent_x;
+    float extent_z;
+}
+
 // A frame of the session, borrowed for the handler's call. `image` is the camera picture.
 // `camera` is the camera's pose (camera to world, axes along the picture as the sensor gives
 // it), `intrinsics` the picture's, `tracking` and `reason` how well it is tracked. Planes,
-// anchors and points are arrays of `*_count` items (planes and points only when the options
-// asked for them); `light` and `depth` are set when asked for and available.
+// anchors, image targets found and points are arrays of `*_count` items (planes, images and
+// points only when the options asked for them); `light` and `depth` are set when asked for
+// and available. `has_image` is false where the platform gives no camera picture (the web
+// without WebXR raw camera access, where the browser draws the camera itself): `image` is
+// then empty, with no planes, and only its size and rotation are set (the viewport's).
 struct ArFrame {
     ArCameraImage image;
     ArMat4 camera;
@@ -171,11 +232,17 @@ struct ArFrame {
     int point_count;
     ArLight light;
     ArDepth depth;
+    *ArTrackedImage images;
+    int image_count;
+    bool has_image;
 }
 
 // The platform's side (native/ios, native/android, native/web). ar_native_session starts the
 // session (`on` 1, with the option flags and the picture size wished for) or stops it;
-// status messages come on the "ar" channel ("running", "unsupported", "denied",
+// ar_native_images starts a new set of image targets (sent before the session call that uses
+// them) and ar_native_image_add gives one, as tight 8-bit gray pixels or a file path, which
+// the native side copies; ar_native_image_state says where one stands (an ArImageState).
+// Status messages come on the "ar" channel ("running", "unsupported", "denied",
 // "installing", "failed", "paused"), and "frame" on the "ar_frame" channel when a frame is
 // waiting and none was posted since the last acquire. ar_native_frame_acquire lends the
 // newest frame: it fills AR_IMAGE_INFO int64 values (ui-camera's frame layout) and
@@ -195,6 +262,11 @@ extern int ar_native_depth(*int64 info);
 extern int ar_native_hit_test(*float ray, int targets, *double out, int max_hits);
 extern double ar_native_anchor_add(*float pose, double plane);
 extern void ar_native_anchor_remove(double id);
+extern void ar_native_images(int count, int tracked);
+extern void ar_native_image_add(int index, *uint8 gray, int width, int height, string path, double physical_width);
+extern int ar_native_image_state(int index);
+extern int ar_native_tracked_image_count();
+extern void ar_native_tracked_image(int index, *double info);
 
 // Option flags for ar_native_session.
 const int AR_FLAG_HORIZONTAL = 1;
@@ -203,6 +275,7 @@ const int AR_FLAG_LIGHT = 4;
 const int AR_FLAG_DEPTH = 8;
 const int AR_FLAG_POINTS = 16;
 const int AR_FLAG_LIGHT_HDR = 32;
+const int AR_FLAG_IMAGES = 64;
 
 // How many values the native side fills. The image: width, height, format, plane_count,
 // rotation, front, matrix, full_range, timestamp_ns, then for each of 3 planes its data
@@ -231,11 +304,18 @@ const int AR_HIT_INFO = 19;
 // Depth: width, height, format, row_stride, data pointer, size.
 const int AR_DEPTH_INFO = 6;
 
+// A tracked image: id, target index, tracking, method, the pose's 16 values, extent x and z.
+const int AR_TRACKED_IMAGE_INFO = 22;
+
 // The most plane outline points, planes, feature points and hits read from one frame.
 const int AR_MAX_POLYGON = 256;
 const int AR_MAX_PLANES = 64;
 const int AR_MAX_POINTS = 4096;
 const int AR_MAX_HITS = 16;
+
+// The most image targets a session takes (ARKit suggests up to 100 for detection; ARCore's
+// database holds up to 1000) and the most read from one frame.
+const int AR_MAX_IMAGES = 100;
 
 // The flags for ar_native_session from the options.
 int ar_flags(ArOptions options) {
@@ -246,6 +326,7 @@ int ar_flags(ArOptions options) {
     if (options.depth) { flags |= AR_FLAG_DEPTH; }
     if (options.points) { flags |= AR_FLAG_POINTS; }
     if (options.light_hdr) { flags |= AR_FLAG_LIGHT_HDR; }
+    if (options.images != null && options.image_count > 0) { flags |= AR_FLAG_IMAGES; }
     return flags;
 }
 
@@ -258,6 +339,7 @@ int ar_read_status(string payload) {
     if (strcmp(payload, "denied") == 0) { return ArDenied; }
     if (strcmp(payload, "installing") == 0) { return ArInstalling; }
     if (strcmp(payload, "paused") == 0) { return ArPaused; }
+    if (strcmp(payload, "tap") == 0) { return ArWaitingForTap; }
     return ArFailed;
 }
 
@@ -279,14 +361,15 @@ bool ar_mat4_finite(ArMat4 m) {
 
 // The image values the native side filled, checked, as a camera image; false when they do
 // not describe one (unknown format, a missing plane, strides or sizes that do not cover the
-// pixels), so a handler never reads outside a buffer.
+// pixels), so a handler never reads outside a buffer. No planes at all is a frame with no
+// picture (ArFrame.has_image false).
 bool ar_image_read(*int64 info, *ArCameraImage out) {
     *out = ArCameraImage{};
     int64 width = info[0];
     int64 height = info[1];
     int64 format = info[2];
     if (width <= 0 || height <= 0 || width > 16384 || height > 16384) { return false; }
-    if (format < 0 || format > 3) { return false; }
+    if (format < 0 || format > 4) { return false; }
     out.width = (int)width;
     out.height = (int)height;
     out.format = (int)format;
@@ -298,7 +381,9 @@ bool ar_image_read(*int64 info, *ArCameraImage out) {
     out.matrix = info[6] == 1 ? 1 : 0;
     out.full_range = info[7] != 0;
     out.timestamp_ns = info[8];
-    int want = format <= 1 ? 2 : 3;
+    // No picture (the web, where the browser draws the camera): no planes, only the size.
+    if (out.plane_count == 0) { return true; }
+    int want = format <= 1 ? 2 : format == 4 ? 1 : 3;
     if (out.plane_count != want) { return false; }
     for (i in 0..want) {
         *ArImagePlane plane = &out.planes[i];
@@ -316,8 +401,9 @@ bool ar_image_read(*int64 info, *ArCameraImage out) {
             rows = (out.height + 1) / 2;
             samples = (out.width + 1) / 2;
         }
-        int tail = want == 2 && i == 1 ? 2 : 1;
+        int tail = want == 2 && i == 1 ? 2 : format == 4 ? 4 : 1;
         if (want == 2 && i == 1 && plane.pixel_stride < 2) { return false; }
+        if (format == 4 && plane.pixel_stride < 4) { return false; }
         int64 row_bytes = (int64)(samples - 1) * plane.pixel_stride + tail;
         if ((int64)plane.row_stride < row_bytes) { return false; }
         int64 need = (int64)(rows - 1) * plane.row_stride + row_bytes;
@@ -349,6 +435,14 @@ List<ArPlane> _ar_planes;
 List<ArVec2> _ar_polygon;
 List<ArAnchor> _ar_anchors;
 List<ArPoint> _ar_points;
+List<ArTrackedImage> _ar_tracked;
+
+// The image targets the session has, as ar_send_images last sent them: each one's name
+// (copied), whether it was refused before reaching the platform, and what was sent, by
+// ar_images_key.
+List<String> _ar_image_names;
+List<bool> _ar_image_refused;
+int64 _ar_images_sent;
 
 // Reads the lent frame's planes, anchors, points, light and depth into `frame`, as `flags`
 // asked.
@@ -357,6 +451,7 @@ void ar_frame_fill(*ArFrame frame, int flags) {
     _ar_polygon.clear();
     _ar_anchors.clear();
     _ar_points.clear();
+    _ar_tracked.clear();
     double[AR_LIGHT_INFO] values;
     if ((flags & (AR_FLAG_HORIZONTAL | AR_FLAG_VERTICAL)) != 0) {
         int count = ar_native_plane_count();
@@ -396,6 +491,17 @@ void ar_frame_fill(*ArFrame frame, int flags) {
         if (n > AR_MAX_POINTS) { n = AR_MAX_POINTS; }
         _ar_points.size = n;
     }
+    if ((flags & AR_FLAG_IMAGES) != 0) {
+        int count = ar_native_tracked_image_count();
+        if (count > AR_MAX_IMAGES) { count = AR_MAX_IMAGES; }
+        for (i in 0..count) {
+            ar_native_tracked_image(i, &values[0]);
+            ArTrackedImage image;
+            if (ar_tracked_image_read(&values[0], &image)) { _ar_tracked.push(image); }
+        }
+    }
+    frame.images = _ar_tracked.size > 0 ? &_ar_tracked.data[0] : null;
+    frame.image_count = (int)_ar_tracked.size;
     frame.planes = _ar_planes.size > 0 ? &_ar_planes.data[0] : null;
     frame.plane_count = (int)_ar_planes.size;
     frame.anchors = _ar_anchors.size > 0 ? &_ar_anchors.data[0] : null;
@@ -405,6 +511,131 @@ void ar_frame_fill(*ArFrame frame, int flags) {
     if ((flags & (AR_FLAG_LIGHT | AR_FLAG_LIGHT_HDR)) != 0 && ar_native_light(&values[0]) != 0) { ar_light_read(&values[0], &frame.light); }
     int64[AR_DEPTH_INFO] depth;
     if ((flags & AR_FLAG_DEPTH) != 0 && ar_native_depth(&depth[0]) != 0) { ar_depth_read(&depth[0], &frame.depth); }
+}
+
+// The tracked-image values the native side filled, checked, as an ArTrackedImage with its
+// target's name; false for an index the session does not have or a pose that is not a
+// number.
+bool ar_tracked_image_read(*double info, *ArTrackedImage out) {
+    *out = ArTrackedImage{id: (int64)info[0], index: (int)info[1], tracking: (int)info[2], method: (int)info[3]};
+    if (out.index < 0 || out.index >= (int)_ar_image_names.size) { return false; }
+    out.name = _ar_image_names.data[out.index].data;
+    if (out.name == null) { out.name = ""; }
+    if (out.tracking < ArTrackingNone || out.tracking > ArTrackingNormal) { out.tracking = ArTrackingNone; }
+    if (out.method < ArImageNotTracking || out.method > ArImageLastKnown) { out.method = ArImageNotTracking; }
+    out.pose = ar_mat4_from(&info[4]);
+    out.extent_x = (float)info[20];
+    out.extent_z = (float)info[21];
+    if (!(out.extent_x >= 0.0)) { out.extent_x = 0.0; }
+    if (!(out.extent_z >= 0.0)) { out.extent_z = 0.0; }
+    return ar_mat4_finite(out.pose);
+}
+
+// A target's pixels as tight 8-bit gray rows in `out` (RGBA to luma with BT.601's weights,
+// as the platforms see it); false when the fields do not describe pixels (no data, a size
+// out of 1 to 8192, an unknown format, a stride under a row).
+bool ar_image_gray(*ArImageTarget target, List<uint8>* out) {
+    out.clear();
+    if (target.pixels == null || target.width <= 0 || target.height <= 0 || target.width > 8192 || target.height > 8192) { return false; }
+    int texel = target.format == ArPixelsGray8 ? 1 : target.format == ArPixelsRGBA8 ? 4 : 0;
+    if (texel == 0) { return false; }
+    int64 stride = target.row_stride > 0 ? (int64)target.row_stride : (int64)target.width * texel;
+    if (stride < (int64)target.width * texel) { return false; }
+    out.resize((int64)target.width * target.height);
+    for (y in 0..target.height) {
+        *uint8 row = target.pixels + (int64)y * stride;
+        *uint8 dst = &out.data[(int64)y * target.width];
+        if (texel == 1) {
+            for (x in 0..target.width) { dst[x] = row[x]; }
+        } else {
+            for (x in 0..target.width) {
+                *uint8 p = row + x * 4;
+                dst[x] = (uint8)((77 * (int)p[0] + 150 * (int)p[1] + 29 * (int)p[2] + 128) >> 8);
+            }
+        }
+    }
+    return true;
+}
+
+// What identifies a set of targets for ar_send_images: the array, the count and each
+// target's fields and the characters of its name and path (not the pixels' contents).
+int64 ar_images_key(*ArImageTarget images, int count) {
+    uint64 h = 14695981039346656037;
+    if (images == null || count <= 0) { return 0; }
+    h = (h ^ (uint64)(int64)images) * 1099511628211;
+    h = (h ^ (uint64)count) * 1099511628211;
+    for (i in 0..count) {
+        *ArImageTarget t = &images[i];
+        h = (h ^ (uint64)(int64)t.pixels) * 1099511628211;
+        h = (h ^ (uint64)((int64)t.width << 32 | (int64)t.height)) * 1099511628211;
+        h = (h ^ (uint64)((int64)t.format << 32 | (int64)t.row_stride)) * 1099511628211;
+        double w = (double)t.physical_width;
+        h = (h ^ (uint64)(w * 1000000.0)) * 1099511628211;
+        for (int64 k = 0; t.name != null && t.name[k] != 0; k++) { h = (h ^ (uint64)(uint8)t.name[k]) * 1099511628211; }
+        h = (h ^ 255) * 1099511628211;
+        for (int64 k = 0; t.path != null && t.path[k] != 0; k++) { h = (h ^ (uint64)(uint8)t.path[k]) * 1099511628211; }
+    }
+    return (int64)(h | 1);
+}
+
+// A target's file as a path the platform opens: an absolute path or (on the web) a URL as it
+// is, else the app's asset of that name (ui_asset_path), else the path as given. The caller
+// frees the result when `owned` comes back true.
+string ar_image_path(string path, *bool owned) {
+    *owned = false;
+    if (path == null || path[0] == 0 || path[0] == '/' || strstr(path, "://") != null) { return path; }
+    string found = ui_asset_path(path);
+    if (found == null) { return path; }
+    *owned = true;
+    return found;
+}
+
+// Sends the targets to the platform (ar_native_images, then one ar_native_image_add each,
+// up to AR_MAX_IMAGES) and keeps their names. A target with neither valid pixels nor a path,
+// or no physical width, is refused here and reaches the platform empty.
+void ar_send_images(*ArImageTarget images, int count, int tracked) {
+    for (i in 0..(int)_ar_image_names.size) { String_free(&_ar_image_names.data[i]); }
+    _ar_image_names.clear();
+    _ar_image_refused.clear();
+    if (images == null || count < 0) { count = 0; }
+    if (count > AR_MAX_IMAGES) { count = AR_MAX_IMAGES; }
+    if (tracked < 0) { tracked = 0; }
+    ar_native_images(count, tracked);
+    List<uint8> gray;
+    defer gray.free();
+    for (i in 0..count) {
+        *ArImageTarget t = &images[i];
+        String name;
+        String_from(&name, t.name == null ? "" : t.name);
+        _ar_image_names.push(name);
+        bool has_pixels = ar_image_gray(t, &gray);
+        bool has_path = !has_pixels && t.path != null && t.path[0] != 0;
+        bool ok = (has_pixels || has_path) && t.physical_width > 0.0 && t.physical_width < 1000.0;
+        _ar_image_refused.push(!ok);
+        if (!ok) {
+            ar_native_image_add(i, null, 0, 0, null, 0.0);
+            continue;
+        }
+        if (has_pixels) {
+            ar_native_image_add(i, &gray.data[0], t.width, t.height, null, (double)t.physical_width);
+        } else {
+            bool owned;
+            string path = ar_image_path(t.path, &owned);
+            ar_native_image_add(i, null, 0, 0, path, (double)t.physical_width);
+            if (owned) { free(path); }
+        }
+    }
+    _ar_images_sent = ar_images_key(images, count);
+}
+
+// Where image target `index` (of ArOptions.images) stands: an ArImageState. Pending while
+// the platform prepares it (ARKit checks each image first; ARCore when the session starts).
+int ar_image_state(int index) {
+    if (index < 0 || index >= (int)_ar_image_refused.size) { return ArImageRejected; }
+    if (_ar_image_refused.data[index]) { return ArImageRejected; }
+    int state = ar_native_image_state(index);
+    if (state < ArImagePending || state > ArImageRejected) { return ArImagePending; }
+    return state;
 }
 
 // The light values the native side filled, as an ArLight on the package's scale: ARKit's
@@ -530,7 +761,7 @@ int64 ar_anchor_add_hit(*ArHit hit) { return (int64)ar_native_anchor_add(&hit.po
 void ar_anchor_remove(int64 id) { ar_native_anchor_remove((double)id); }
 
 // The latest render's frame handler and the options it asked for, kept in the hook's slot.
-struct ArSessionHandler { fn(*ArFrame)->void handler; ArOptions options; bool asked; }
+struct ArSessionHandler { fn(*ArFrame)->void handler; ArOptions options; bool asked; int64 images_key; }
 
 // How many use_ar_session scopes are mounted, and the flags the first asked for.
 int ar_session_users;
@@ -546,6 +777,7 @@ void ar_deliver_frame(fn(*ArFrame)->void handler) {
     if (ar_native_frame_acquire(&image[0], &camera[0]) == 0) { return; }
     ArFrame frame;
     if (ar_image_read(&image[0], &frame.image) && ar_camera_read(&camera[0], &frame)) {
+        frame.has_image = frame.image.plane_count > 0;
         ar_frame_fill(&frame, ar_session_flags);
         handler(&frame);
     }
@@ -568,11 +800,17 @@ void use_ar_session(ArOptions options, escaping fn(*ArFrame)->void on_frame) {
     } else { ar_release_handler(held.handler); }
     held.handler = on_frame;
     int flags = ar_flags(options);
+    int64 images = ar_images_key(options.images, options.image_count);
+    bool new_images = images != held.images_key || options.tracked_images != held.options.tracked_images;
     if (held.asked && (flags != ar_flags(held.options) || held.options.image_width != options.image_width ||
-                       held.options.image_height != options.image_height)) {
+                       held.options.image_height != options.image_height || new_images)) {
+        if (new_images) { ar_send_images(options.images, options.image_count, options.tracked_images); }
         ar_session_flags = flags;
         ar_native_session(1, flags, options.image_width, options.image_height);
+    } else if (!held.asked && new_images) {
+        ar_send_images(options.images, options.image_count, options.tracked_images);
     }
+    held.images_key = images;
     held.options = options;
     use_native_event("ar_frame", void(string payload) { ar_deliver_frame(held.handler); });
     use_mount(void() {
