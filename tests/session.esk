@@ -1,0 +1,316 @@
+// <ar> with no device: use_ar_session and use_ar_status against stand-ins for the native
+// side that lend a frame (an NV12 picture, a pose, intrinsics, two planes with outlines, an
+// anchor, feature points, light and depth), the checks on what the platform lends, hit
+// tests, anchors, new options, and unmounting. Each check that fails exits with 1.
+import <io>;
+import <ui>;
+import <ar>;
+
+void check(bool ok, string what) {
+    if (!ok) {
+        printf("FAIL %s\n", what);
+        exit(1);
+    }
+}
+
+// What the stand-ins were asked and what they lend.
+int session_on = -1;
+int session_flags;
+int session_width;
+int session_height;
+int session_calls;
+int acquires;
+int releases;
+bool lend;
+int64[AR_IMAGE_INFO] lent_image;
+double[AR_CAMERA_INFO] lent_camera;
+uint8[64 * 48] luma;
+uint8[64 * 24] chroma;
+float[16] depth_meters;
+float[6] last_ray;
+int last_targets;
+float[16] added_pose;
+int64 added_plane;
+int64 removed = -1;
+bool lent_now;
+
+void ar_native_session(int on, int flags, int width, int height) {
+    session_calls++;
+    session_on = on;
+    session_flags = flags;
+    session_width = width;
+    session_height = height;
+}
+
+int ar_native_frame_acquire(*int64 image, *double camera) {
+    acquires++;
+    if (!lend) { return 0; }
+    for (i in 0..AR_IMAGE_INFO) { image[i] = lent_image[i]; }
+    for (i in 0..AR_CAMERA_INFO) { camera[i] = lent_camera[i]; }
+    lent_now = true;
+    return 1;
+}
+
+void ar_native_frame_release() {
+    releases++;
+    lent_now = false;
+}
+
+int ar_native_plane_count() { return 2; }
+
+// Plane 0: a floor 2 m by 1 m at y = -1.2 with a square outline; plane 1: a wall.
+int ar_native_plane(int index, *double info, *float polygon, int max_points) {
+    check(lent_now, "planes are read while the frame is lent");
+    for (i in 0..AR_PLANE_INFO) { info[i] = 0.0; }
+    info[0] = (double)(100 + index);
+    info[1] = index == 0 ? (double)ArHorizontalUp : (double)ArVertical;
+    info[2] = (double)ArTrackingNormal;
+    info[3] = 1.0; info[8] = 1.0; info[13] = 1.0; info[18] = 1.0;
+    info[16] = index == 0 ? -1.2 : 0.0;
+    info[19] = 2.0;
+    info[20] = 1.0;
+    int n = index == 0 ? 4 : 3;
+    for (p in 0..n) {
+        polygon[p * 2] = (float)(p + index * 10);
+        polygon[p * 2 + 1] = (float)(-p);
+    }
+    return n;
+}
+
+int ar_native_anchor_count() { return 1; }
+
+void ar_native_anchor(int index, *double info) {
+    for (i in 0..AR_ANCHOR_INFO) { info[i] = 0.0; }
+    info[0] = 7.0;
+    info[1] = (double)ArTrackingLimited;
+    info[2] = 1.0; info[7] = 1.0; info[12] = 1.0; info[17] = 1.0;
+    info[14] = 0.5;
+}
+
+int ar_native_points(*float out, int max_points) {
+    check(max_points >= 3, "room for the points");
+    for (i in 0..3) {
+        out[i * 4] = (float)i;
+        out[i * 4 + 1] = 0.25;
+        out[i * 4 + 2] = -1.0;
+        out[i * 4 + 3] = 0.5;
+    }
+    return 3;
+}
+
+int ar_native_light(*double info) {
+    for (i in 0..AR_LIGHT_INFO) { info[i] = 0.0; }
+    info[0] = 1.0;
+    info[1] = 0.8;
+    info[2] = 5000.0;
+    info[3] = 1.0; info[4] = 0.9; info[5] = 0.8;
+    return 1;
+}
+
+int ar_native_depth(*int64 info) {
+    info[0] = 4;
+    info[1] = 4;
+    info[2] = ArDepthMeters32;
+    info[3] = 16;
+    info[4] = (int64)&depth_meters[0];
+    info[5] = 64;
+    return 1;
+}
+
+// One plane hit 1.2 m below the camera, along the ray.
+int ar_native_hit_test(*float ray, int targets, *double out, int max_hits) {
+    for (i in 0..6) { last_ray[i] = ray[i]; }
+    last_targets = targets;
+    for (i in 0..AR_HIT_INFO) { out[i] = 0.0; }
+    out[0] = 1.5;
+    out[1] = (double)AR_HIT_PLANE;
+    out[2] = 100.0;
+    out[3] = 1.0; out[8] = 1.0; out[13] = 1.0; out[18] = 1.0;
+    out[16] = -1.2;
+    return 1;
+}
+
+int64 ar_native_anchor_add(*float pose, int64 plane) {
+    for (i in 0..16) { added_pose[i] = pose[i]; }
+    added_plane = plane;
+    return 42;
+}
+
+void ar_native_anchor_remove(int64 id) { removed = id; }
+
+// A 64x48 NV12 picture turned 90 for portrait, an identity pose, intrinsics of 50 pixels.
+void lend_frame() {
+    for (i in 0..AR_IMAGE_INFO) { lent_image[i] = 0; }
+    lent_image[0] = 64;
+    lent_image[1] = 48;
+    lent_image[2] = 0;
+    lent_image[3] = 2;
+    lent_image[4] = 90;
+    lent_image[7] = 1;
+    lent_image[8] = 123456789;
+    lent_image[9] = (int64)&luma[0];
+    lent_image[10] = 64;
+    lent_image[11] = 1;
+    lent_image[12] = 64 * 48;
+    lent_image[13] = (int64)&chroma[0];
+    lent_image[14] = 64;
+    lent_image[15] = 2;
+    lent_image[16] = 64 * 24;
+    for (i in 0..AR_CAMERA_INFO) { lent_camera[i] = 0.0; }
+    lent_camera[0] = (double)ArTrackingNormal;
+    lent_camera[2] = 1.0; lent_camera[7] = 1.0; lent_camera[12] = 1.0; lent_camera[17] = 1.0;
+    lent_camera[18] = 50.0;
+    lent_camera[19] = 50.0;
+    lent_camera[20] = 32.0;
+    lent_camera[21] = 24.0;
+    lent_camera[22] = 64.0;
+    lent_camera[23] = 48.0;
+    lend = true;
+}
+
+*Signal<int> mounted;
+*Signal<int> vertical;
+int seen;
+int seen_status = -1;
+ArFrame copy;
+int seen_planes;
+int seen_polygon;
+float seen_poly_x;
+int seen_anchors;
+int seen_points;
+bool seen_light;
+float seen_depth;
+int hits;
+ArHit hit;
+int64 anchor_id;
+
+void Screen() {
+    Scope("Screen", Key{}) {
+        use_ar_status(void(int status) { seen_status = status; });
+        use_ar_session(ArOptions{vertical: vertical.get() != 0, points: true, depth: true}, void(*ArFrame frame) {
+            seen++;
+            copy = *frame;
+            seen_planes = frame.plane_count;
+            seen_polygon = frame.plane_count > 1 ? frame.planes[1].polygon_count : 0;
+            seen_poly_x = frame.plane_count > 1 ? frame.planes[1].polygon[2].x : -1.0;
+            seen_anchors = frame.anchor_count;
+            seen_points = frame.point_count;
+            seen_light = frame.light.valid;
+            seen_depth = frame.depth.meters(1, 2);
+            ArHit[4] found;
+            hits = frame.hit_test(195.0, 422.0, 390.0, 844.0, AR_HIT_PLANES, &found[0], 4);
+            if (hits > 0) {
+                hit = found[0];
+                anchor_id = ar_anchor_add_hit(&found[0]);
+            }
+        });
+    }
+}
+
+void bad_frames() {
+    ArCameraImage image;
+    lend_frame();
+    check(ar_image_read(&lent_image[0], &image), "a good NV12 picture reads");
+    check(image.width == 64 && image.rotation == 90 && image.full_range && image.planes[1].pixel_stride == 2, "its fields");
+    lent_image[16] = 64 * 23;
+    check(!ar_image_read(&lent_image[0], &image), "a chroma plane too short is refused");
+    lend_frame();
+    lent_image[4] = 45;
+    check(!ar_image_read(&lent_image[0], &image), "an odd rotation is refused");
+    lend_frame();
+    lent_image[2] = 9;
+    check(!ar_image_read(&lent_image[0], &image), "an unknown format is refused");
+    lend_frame();
+    lent_image[10] = 32;
+    check(!ar_image_read(&lent_image[0], &image), "a stride under the width is refused");
+    lend_frame();
+    ArFrame frame;
+    check(ar_camera_read(&lent_camera[0], &frame), "good camera values read");
+    lent_camera[18] = 0.0;
+    check(!ar_camera_read(&lent_camera[0], &frame), "a zero focal length is refused");
+    lend_frame();
+    lent_camera[5] = 0.0 / 0.0;
+    check(!ar_camera_read(&lent_camera[0], &frame), "a NaN in the pose is refused");
+    lend_frame();
+    int64[AR_DEPTH_INFO] d = {4, 4, ArDepthMeters32, 8, (int64)&depth_meters[0], 64};
+    ArDepth depth;
+    ar_depth_read(&d[0], &depth);
+    check(depth.data == null, "a depth stride under the row is refused");
+    d[2] = ArDepthMillimeters16;
+    ar_depth_read(&d[0], &depth);
+    check(depth.data != null && depth.meters(3, 3) == (float)(((*uint16)&depth_meters[0])[3 * 4 + 3]) / 1000.0, "16-bit millimeters");
+    check(depth.meters(4, 0) == 0.0, "outside the depth image is 0");
+    check(ar_read_status("running") == ArRunning && ar_read_status("denied") == ArDenied &&
+          ar_read_status("bogus") == ArFailed && ar_read_status(null) == ArFailed, "status messages");
+}
+
+void hook() {
+    Ui runtime;
+    ui_init(&runtime, void(*uint8 data, int len) { ui_complete(ui.sequence); });
+    mounted = signal_new<int>(1);
+    vertical = signal_new<int>(0);
+    ui_mount() {
+        if (mounted.get() > 0) { Screen(); }
+    }
+    ui_frame();
+    check(session_on == 1 && session_width == 1280 && session_height == 720, "mounting starts the session");
+    check(session_flags == (AR_FLAG_HORIZONTAL | AR_FLAG_LIGHT | AR_FLAG_DEPTH | AR_FLAG_POINTS), "the default flags");
+
+    ui_event_native("ar", "running");
+    ui_frame();
+    check(seen_status == ArRunning, "the status reaches its handler");
+
+    for (i in 0..16) { depth_meters[i] = (float)i * 0.25; }
+    lend_frame();
+    ui_event_native("ar_frame", "frame");
+    ui_frame();
+    check(seen == 1 && acquires == 1 && releases == 1, "a frame reaches the handler and is given back");
+    check(copy.image.width == 64 && copy.image.rotation == 90 && copy.image.timestamp_ns == 123456789, "the picture");
+    check(copy.tracking == ArTrackingNormal && copy.intrinsics.fx == 50.0 && copy.intrinsics.width == 64, "the camera");
+    check(seen_planes == 2 && seen_polygon == 3 && seen_poly_x == 12.0, "the planes and their outlines");
+    check(seen_anchors == 1 && seen_points == 3 && seen_light, "anchors, points and light");
+    check(seen_depth == depth_meters[2 * 4 + 1], "depth at a pixel");
+    // The middle of a portrait viewport looks straight ahead: the ray is -z from the origin.
+    check(hits == 1 && last_targets == AR_HIT_PLANES, "a hit test");
+    check(last_ray[0] == 0.0 && last_ray[5] < -0.999, "the hit-test ray from the viewport's center");
+    check(hit.plane == 100 && hit.pose.m[13] == (float)-1.2, "the hit");
+    check(anchor_id == 42 && added_plane == 100 && added_pose[13] == (float)-1.2, "an anchor at the hit");
+    ar_anchor_remove(42);
+    check(removed == 42, "removing an anchor");
+
+    lend = false;
+    ui_event_native("ar_frame", "frame");
+    ui_frame();
+    check(seen == 1 && acquires == 2 && releases == 1, "no frame waiting: no call, nothing to give back");
+
+    lend_frame();
+    lent_image[4] = 33;
+    ui_event_native("ar_frame", "frame");
+    ui_frame();
+    check(seen == 1 && releases == 2, "a frame that does not check out is given back unseen");
+
+    int calls = session_calls;
+    vertical.set(1);
+    ui_frame();
+    check(session_calls == calls + 1 && (session_flags & AR_FLAG_VERTICAL) != 0, "new options start the session again");
+    ui_frame();
+    check(session_calls == calls + 1, "the same options are not sent again");
+
+    mounted.set(0);
+    ui_frame();
+    check(session_on == 0, "unmounting stops the session");
+    lend_frame();
+    ui_event_native("ar_frame", "frame");
+    ui_frame();
+    check(seen == 1, "no handler once unmounted");
+    ui_shutdown();
+    mounted.free();
+    vertical.free();
+}
+
+int main() {
+    bad_frames();
+    hook();
+    printf("PASS session\n");
+    return 0;
+}

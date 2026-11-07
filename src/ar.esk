@@ -1,0 +1,578 @@
+// <ar>: augmented reality for apps on eskiu-lang/ui, over ARKit on iOS and ARCore on
+// Android. use_ar_session runs a world-tracking session while its scope is mounted and hands
+// each new frame to Eskiu on the UI thread: the camera picture as YUV planes (the layout of
+// ui-camera's CameraFrame, which eskiu-gpu's <gpu/yuv> draws), the camera's pose and
+// intrinsics, planes, anchors, feature points, the light estimate and depth. The geometry
+// (view, projection, display transform, hit-test ray) is computed in <ar/math>, the same on
+// both platforms. The web has no AR in this version (ArUnsupported).
+import <string>;
+import <list>;
+import <ui>;
+import <ar/math>;
+
+// Where the session is: starting (asking for the camera, installing ARCore), running, or
+// why it is not: the device has no AR (or it is the simulator, or the browser), the camera
+// permission is denied, ARCore is being installed (the session starts when it is), it
+// failed, or it is paused while the app is in the background.
+enum ArStatus { ArStarting, ArRunning, ArUnsupported, ArDenied, ArInstalling, ArFailed, ArPaused }
+
+// How well the camera is tracked: not at all (its pose means nothing), limited (the pose is
+// rough; `reason` says why), or normal.
+enum ArTracking { ArTrackingNone, ArTrackingLimited, ArTrackingNormal }
+
+// Why tracking is limited: none, starting up, the device moves too fast, too few features
+// (a blank wall), too dark, finding its place again after an interruption, the camera is
+// unavailable, or an internal error.
+enum ArReason {
+    ArReasonNone,
+    ArReasonInitializing,
+    ArReasonExcessiveMotion,
+    ArReasonInsufficientFeatures,
+    ArReasonInsufficientLight,
+    ArReasonRelocalizing,
+    ArReasonCameraUnavailable,
+    ArReasonBadState
+}
+
+// Which way a plane faces: horizontal facing up (a floor, a table), horizontal facing down
+// (a ceiling), or vertical (a wall).
+enum ArAlignment { ArHorizontalUp, ArHorizontalDown, ArVertical }
+
+// What a depth image holds: 32-bit floats in meters (ARKit's LiDAR) or 16-bit unsigned
+// millimeters (ARCore).
+enum ArDepthFormat { ArDepthMeters32, ArDepthMillimeters16 }
+
+// Hit-test targets, combined with |: planes found so far (inside their outline), and
+// estimates (ARKit's estimated planes, ARCore's feature and depth points).
+const int AR_HIT_PLANES = 1;
+const int AR_HIT_ESTIMATED = 2;
+
+// Hit kinds in ArHit.kind.
+const int AR_HIT_PLANE = 1;
+const int AR_HIT_ESTIMATE = 2;
+
+// What use_ar_session asks for: plane detection (horizontal, vertical), the light estimate,
+// depth where the device has it (LiDAR on iOS, the Depth API on Android), the feature
+// points, and the size of the camera picture (a wish: the platform gives the nearest it
+// has, as the sensor sees it, landscape).
+struct ArOptions {
+    bool horizontal = true;
+    bool vertical = false;
+    bool light = true;
+    bool depth = false;
+    bool points = false;
+    int image_width = 1280;
+    int image_height = 720;
+}
+
+// One plane of the camera picture: `data` (borrowed for the handler's call), the bytes from
+// one row to the next, from one sample to the next in a row, and the bytes readable from
+// `data`. The layout of ui-camera's CameraPlane and eskiu-gpu's GpuYuvPlane.
+struct ArImagePlane { *uint8 data; int row_stride; int pixel_stride; int64 size; }
+
+// The camera picture, with the field layout of ui-camera's CameraFrame and eskiu-gpu's
+// GpuYuvImage, so `(*GpuYuvImage)&frame.image` uploads it: size, format (0 NV12 on iOS, 0
+// NV12, 1 NV21, 2 I420 or 3 three-plane YUV on Android), the planes, how far to turn it
+// clockwise to be upright on the screen, the capture time, and its YUV matrix (0 BT.601)
+// and range.
+struct ArCameraImage {
+    int width;
+    int height;
+    int format;
+    int plane_count;
+    ArImagePlane[3] planes;
+    int rotation;
+    int64 timestamp_ns;
+    bool front;
+    int matrix;
+    bool full_range;
+}
+
+// A detected plane: an id that stays the same while it is tracked, its alignment, how well
+// it is tracked, its center pose (y along the plane's normal), its size along the pose's x
+// and z, its outline (`polygon_count` points in the pose's x-z plane, borrowed for the
+// handler's call), and the id of the plane that took it over (0 while it stands alone).
+struct ArPlane {
+    int64 id;
+    int alignment;
+    int tracking;
+    ArMat4 pose;
+    float extent_x;
+    float extent_z;
+    *ArVec2 polygon;
+    int polygon_count;
+    int64 subsumed_by;
+}
+
+// An anchor the app added: its id, how well it is tracked, and its pose, which the session
+// updates as it learns more about the world.
+struct ArAnchor { int64 id; int tracking; ArMat4 pose; }
+
+// A feature point in world space and the platform's confidence in it (0 to 1; 1 on iOS).
+struct ArPoint { ArVec3 position; float confidence; }
+
+// The light estimate. `intensity` is 1.0 in a neutral scene (ARKit's ambient intensity over
+// 1000; ARCore's pixel intensity over its mid gray), `temperature` the color temperature in
+// kelvin (ARKit; 6500 on Android) and `color` the tint to multiply lighting by (from the
+// temperature on iOS, ARCore's color correction). With ARCore's environmental HDR mode the
+// main light's direction (toward the light) and intensity, and 9 RGB spherical harmonics
+// coefficients of the ambient light.
+struct ArLight {
+    bool valid;
+    float intensity;
+    float temperature;
+    ArVec3 color;
+    bool has_main;
+    ArVec3 main_direction;
+    ArVec3 main_intensity;
+    bool has_harmonics;
+    float[27] harmonics;
+}
+
+// A depth image, aligned with the camera picture (as the sensor gives it, often smaller):
+// size, format (ArDepthFormat), the bytes from one row to the next, and `data`, borrowed for
+// the handler's call (null when there is no depth).
+struct ArDepth { int width; int height; int format; int row_stride; *uint8 data; int64 size; }
+
+// One hit-test result: the distance from the camera, the kind (AR_HIT_PLANE or
+// AR_HIT_ESTIMATE), the plane hit (0 for an estimate) and the pose of the hit (y along the
+// surface's normal).
+struct ArHit { float distance; int kind; int64 plane; ArMat4 pose; }
+
+// A frame of the session, borrowed for the handler's call. `image` is the camera picture.
+// `camera` is the camera's pose (camera to world, axes along the picture as the sensor gives
+// it), `intrinsics` the picture's, `tracking` and `reason` how well it is tracked. Planes,
+// anchors and points are arrays of `*_count` items (planes and points only when the options
+// asked for them); `light` and `depth` are set when asked for and available.
+struct ArFrame {
+    ArCameraImage image;
+    ArMat4 camera;
+    ArIntrinsics intrinsics;
+    int tracking;
+    int reason;
+    *ArPlane planes;
+    int plane_count;
+    *ArAnchor anchors;
+    int anchor_count;
+    *ArPoint points;
+    int point_count;
+    ArLight light;
+    ArDepth depth;
+}
+
+// The platform's side (native/ios, native/android, native/web). ar_native_session starts the
+// session (`on` 1, with the option flags and the picture size wished for) or stops it;
+// status messages come on the "ar" channel ("running", "unsupported", "denied",
+// "installing", "failed", "paused"), and "frame" on the "ar_frame" channel when a frame is
+// waiting and none was posted since the last acquire. ar_native_frame_acquire lends the
+// newest frame: it fills AR_IMAGE_INFO int64 values (ui-camera's frame layout) and
+// AR_CAMERA_INFO doubles and returns 1, or 0 when there is none. While it is lent, the
+// other calls read it; ar_native_frame_release ends the loan.
+extern void ar_native_session(int on, int flags, int width, int height);
+extern int ar_native_frame_acquire(*int64 image, *double camera);
+extern void ar_native_frame_release();
+extern int ar_native_plane_count();
+extern int ar_native_plane(int index, *double info, *float polygon, int max_points);
+extern int ar_native_anchor_count();
+extern void ar_native_anchor(int index, *double info);
+extern int ar_native_points(*float out, int max_points);
+extern int ar_native_light(*double info);
+extern int ar_native_depth(*int64 info);
+extern int ar_native_hit_test(*float ray, int targets, *double out, int max_hits);
+extern int64 ar_native_anchor_add(*float pose, int64 plane);
+extern void ar_native_anchor_remove(int64 id);
+
+// Option flags for ar_native_session.
+const int AR_FLAG_HORIZONTAL = 1;
+const int AR_FLAG_VERTICAL = 2;
+const int AR_FLAG_LIGHT = 4;
+const int AR_FLAG_DEPTH = 8;
+const int AR_FLAG_POINTS = 16;
+
+// How many values the native side fills. The image: width, height, format, plane_count,
+// rotation, front, matrix, full_range, timestamp_ns, then for each of 3 planes its data
+// pointer, row_stride, pixel_stride and size.
+const int AR_IMAGE_INFO = 24;
+
+// The camera: tracking (an ArTracking), reason (an ArReason), the pose's 16 values, fx, fy,
+// cx, cy, and the intrinsics' image width and height.
+const int AR_CAMERA_INFO = 24;
+
+// A plane: id, alignment, tracking, the center pose's 16 values, extent x and z, subsumed
+// by.
+const int AR_PLANE_INFO = 22;
+
+// An anchor: id, tracking, the pose's 16 values.
+const int AR_ANCHOR_INFO = 18;
+
+// The light: valid, intensity, temperature, color r g b, has_main, direction x y z,
+// intensity r g b, has_harmonics, then 27 harmonics coefficients.
+const int AR_LIGHT_INFO = 41;
+
+// A hit: distance, kind, plane id, the pose's 16 values.
+const int AR_HIT_INFO = 19;
+
+// Depth: width, height, format, row_stride, data pointer, size.
+const int AR_DEPTH_INFO = 6;
+
+// The most plane outline points, planes, feature points and hits read from one frame.
+const int AR_MAX_POLYGON = 256;
+const int AR_MAX_PLANES = 64;
+const int AR_MAX_POINTS = 4096;
+const int AR_MAX_HITS = 16;
+
+// The flags for ar_native_session from the options.
+int ar_flags(ArOptions options) {
+    int flags = 0;
+    if (options.horizontal) { flags |= AR_FLAG_HORIZONTAL; }
+    if (options.vertical) { flags |= AR_FLAG_VERTICAL; }
+    if (options.light) { flags |= AR_FLAG_LIGHT; }
+    if (options.depth) { flags |= AR_FLAG_DEPTH; }
+    if (options.points) { flags |= AR_FLAG_POINTS; }
+    return flags;
+}
+
+// A message on the "ar" channel as an ArStatus (ArFailed when it is not one).
+int ar_read_status(string payload) {
+    if (payload == null) { return ArFailed; }
+    if (strcmp(payload, "running") == 0) { return ArRunning; }
+    if (strcmp(payload, "starting") == 0) { return ArStarting; }
+    if (strcmp(payload, "unsupported") == 0) { return ArUnsupported; }
+    if (strcmp(payload, "denied") == 0) { return ArDenied; }
+    if (strcmp(payload, "installing") == 0) { return ArInstalling; }
+    if (strcmp(payload, "paused") == 0) { return ArPaused; }
+    return ArFailed;
+}
+
+// 16 doubles from `at` as a matrix.
+ArMat4 ar_mat4_from(*double at) {
+    ArMat4 m;
+    for (i in 0..16) { m.m[i] = (float)at[i]; }
+    return m;
+}
+
+// True when every value of `m` is finite (not NaN or infinite).
+bool ar_mat4_finite(ArMat4 m) {
+    for (i in 0..16) {
+        float v = m.m[i];
+        if (v != v || v > 1e30 || v < -1e30) { return false; }
+    }
+    return true;
+}
+
+// The image values the native side filled, checked, as a camera image; false when they do
+// not describe one (unknown format, a missing plane, strides or sizes that do not cover the
+// pixels), so a handler never reads outside a buffer.
+bool ar_image_read(*int64 info, *ArCameraImage out) {
+    *out = ArCameraImage{};
+    int64 width = info[0];
+    int64 height = info[1];
+    int64 format = info[2];
+    if (width <= 0 || height <= 0 || width > 16384 || height > 16384) { return false; }
+    if (format < 0 || format > 3) { return false; }
+    out.width = (int)width;
+    out.height = (int)height;
+    out.format = (int)format;
+    out.plane_count = (int)info[3];
+    int64 rotation = info[4];
+    if (rotation != 0 && rotation != 90 && rotation != 180 && rotation != 270) { return false; }
+    out.rotation = (int)rotation;
+    out.front = info[5] != 0;
+    out.matrix = info[6] == 1 ? 1 : 0;
+    out.full_range = info[7] != 0;
+    out.timestamp_ns = info[8];
+    int want = format <= 1 ? 2 : 3;
+    if (out.plane_count != want) { return false; }
+    for (i in 0..want) {
+        *ArImagePlane plane = &out.planes[i];
+        plane.data = (*uint8)info[9 + i * 4];
+        int64 row_stride = info[10 + i * 4];
+        int64 pixel_stride = info[11 + i * 4];
+        plane.size = info[12 + i * 4];
+        if (plane.data == null || row_stride <= 0 || row_stride > 1 << 20) { return false; }
+        if (pixel_stride <= 0 || pixel_stride > 8) { return false; }
+        plane.row_stride = (int)row_stride;
+        plane.pixel_stride = (int)pixel_stride;
+        int rows = out.height;
+        int samples = out.width;
+        if (i > 0) {
+            rows = (out.height + 1) / 2;
+            samples = (out.width + 1) / 2;
+        }
+        int tail = want == 2 && i == 1 ? 2 : 1;
+        if (want == 2 && i == 1 && plane.pixel_stride < 2) { return false; }
+        int64 row_bytes = (int64)(samples - 1) * plane.pixel_stride + tail;
+        if ((int64)plane.row_stride < row_bytes) { return false; }
+        int64 need = (int64)(rows - 1) * plane.row_stride + row_bytes;
+        if (plane.size < need) { return false; }
+    }
+    return true;
+}
+
+// The camera values the native side filled, checked, into the frame; false when the
+// intrinsics do not describe an image or the pose is not a number.
+bool ar_camera_read(*double info, *ArFrame out) {
+    int tracking = (int)info[0];
+    if (tracking < ArTrackingNone || tracking > ArTrackingNormal) { tracking = ArTrackingNone; }
+    out.tracking = tracking;
+    int reason = (int)info[1];
+    if (reason < ArReasonNone || reason > ArReasonBadState) { reason = ArReasonBadState; }
+    out.reason = reason;
+    out.camera = ar_mat4_from(&info[2]);
+    out.intrinsics = ArIntrinsics{(float)info[18], (float)info[19], (float)info[20], (float)info[21], (int)info[22], (int)info[23]};
+    *ArIntrinsics k = &out.intrinsics;
+    if (!(k.fx > 0.0) || !(k.fy > 0.0) || k.width <= 0 || k.height <= 0) { return false; }
+    if (!ar_mat4_finite(out.camera)) { return false; }
+    return true;
+}
+
+// The buffers a frame's planes, outlines, anchors and points are read into, reused from one
+// frame to the next.
+List<ArPlane> _ar_planes;
+List<ArVec2> _ar_polygon;
+List<ArAnchor> _ar_anchors;
+List<ArPoint> _ar_points;
+
+// Reads the lent frame's planes, anchors, points, light and depth into `frame`, as `flags`
+// asked.
+void ar_frame_fill(*ArFrame frame, int flags) {
+    _ar_planes.clear();
+    _ar_polygon.clear();
+    _ar_anchors.clear();
+    _ar_points.clear();
+    double[AR_LIGHT_INFO] values;
+    if ((flags & (AR_FLAG_HORIZONTAL | AR_FLAG_VERTICAL)) != 0) {
+        int count = ar_native_plane_count();
+        if (count > AR_MAX_PLANES) { count = AR_MAX_PLANES; }
+        float[AR_MAX_POLYGON * 2] outline;
+        List<int> starts;
+        defer starts.free();
+        for (i in 0..count) {
+            int n = ar_native_plane(i, &values[0], &outline[0], AR_MAX_POLYGON);
+            if (n < 0) { continue; }
+            if (n > AR_MAX_POLYGON) { n = AR_MAX_POLYGON; }
+            ArPlane plane = ArPlane{id: (int64)values[0], alignment: (int)values[1], tracking: (int)values[2]};
+            plane.pose = ar_mat4_from(&values[3]);
+            plane.extent_x = (float)values[19];
+            plane.extent_z = (float)values[20];
+            plane.subsumed_by = (int64)values[21];
+            if (plane.alignment < ArHorizontalUp || plane.alignment > ArVertical) { plane.alignment = ArHorizontalUp; }
+            if (!ar_mat4_finite(plane.pose)) { continue; }
+            plane.polygon_count = n;
+            starts.push(_ar_polygon.size);
+            for (p in 0..n) { _ar_polygon.push(ArVec2{outline[p * 2], outline[p * 2 + 1]}); }
+            _ar_planes.push(plane);
+        }
+        // The outline buffer may have moved while it grew: point into it at the end.
+        for (i in 0..(int)_ar_planes.size) { _ar_planes.data[i].polygon = &_ar_polygon.data[starts.data[i]]; }
+    }
+    int anchors = ar_native_anchor_count();
+    for (i in 0..anchors) {
+        ar_native_anchor(i, &values[0]);
+        ArAnchor anchor = ArAnchor{id: (int64)values[0], tracking: (int)values[1], pose: ar_mat4_from(&values[2])};
+        if (ar_mat4_finite(anchor.pose)) { _ar_anchors.push(anchor); }
+    }
+    if ((flags & AR_FLAG_POINTS) != 0) {
+        _ar_points.resize(AR_MAX_POINTS);
+        int n = ar_native_points((*float)&_ar_points.data[0], AR_MAX_POINTS);
+        if (n < 0) { n = 0; }
+        if (n > AR_MAX_POINTS) { n = AR_MAX_POINTS; }
+        _ar_points.size = n;
+    }
+    frame.planes = _ar_planes.size > 0 ? &_ar_planes.data[0] : null;
+    frame.plane_count = (int)_ar_planes.size;
+    frame.anchors = _ar_anchors.size > 0 ? &_ar_anchors.data[0] : null;
+    frame.anchor_count = (int)_ar_anchors.size;
+    frame.points = _ar_points.size > 0 ? &_ar_points.data[0] : null;
+    frame.point_count = (int)_ar_points.size;
+    if ((flags & AR_FLAG_LIGHT) != 0 && ar_native_light(&values[0]) != 0) { ar_light_read(&values[0], &frame.light); }
+    int64[AR_DEPTH_INFO] depth;
+    if ((flags & AR_FLAG_DEPTH) != 0 && ar_native_depth(&depth[0]) != 0) { ar_depth_read(&depth[0], &frame.depth); }
+}
+
+// The light values the native side filled, as an ArLight.
+void ar_light_read(*double info, *ArLight out) {
+    *out = ArLight{};
+    out.valid = info[0] != 0.0;
+    out.intensity = (float)info[1];
+    out.temperature = (float)info[2];
+    out.color = ArVec3{(float)info[3], (float)info[4], (float)info[5]};
+    out.has_main = info[6] != 0.0;
+    out.main_direction = ArVec3{(float)info[7], (float)info[8], (float)info[9]};
+    out.main_intensity = ArVec3{(float)info[10], (float)info[11], (float)info[12]};
+    out.has_harmonics = info[13] != 0.0;
+    for (i in 0..27) { out.harmonics[i] = (float)info[14 + i]; }
+}
+
+// The depth values the native side filled, checked, as an ArDepth; left empty when they do
+// not describe a depth image.
+void ar_depth_read(*int64 info, *ArDepth out) {
+    *out = ArDepth{};
+    int64 width = info[0];
+    int64 height = info[1];
+    int64 format = info[2];
+    int64 row = info[3];
+    *uint8 data = (*uint8)info[4];
+    int64 size = info[5];
+    if (width <= 0 || height <= 0 || width > 8192 || height > 8192 || data == null) { return; }
+    if (format != ArDepthMeters32 && format != ArDepthMillimeters16) { return; }
+    int64 texel = format == ArDepthMeters32 ? 4 : 2;
+    if (row < width * texel || size < (height - 1) * row + width * texel) { return; }
+    *out = ArDepth{width: (int)width, height: (int)height, format: (int)format, row_stride: (int)row, data: data, size: size};
+}
+
+// The depth at pixel (x, y) of the depth image in meters; 0 outside it or where unknown.
+float ArDepth_meters(*ArDepth self, int x, int y) {
+    if (self.data == null || x < 0 || y < 0 || x >= self.width || y >= self.height) { return 0.0; }
+    *uint8 row = self.data + (int64)y * self.row_stride;
+    if (self.format == ArDepthMeters32) {
+        float v = ((*float)row)[x];
+        return v == v ? v : 0.0;
+    }
+    return (float)((*uint16)row)[x] / 1000.0;
+}
+
+// The view matrix (world to camera) for the screen: x right and y up as the picture shows
+// once turned upright.
+ArMat4 ArFrame_view(*ArFrame self) { return ar_view_matrix(self.camera, self.image.rotation); }
+
+// The projection for a viewport `width` x `height` that the picture covers (eskiu-gpu's
+// GPU_YUV_COVER), depth from 0 at `near` to 1 at `far`.
+ArMat4 ArFrame_projection(*ArFrame self, float width, float height, float near, float far) {
+    return self.intrinsics.projection(self.image.rotation, (double)width, (double)height, (double)near, (double)far);
+}
+
+// The display transform for a viewport `width` x `height`: normalized viewport coordinates
+// (0 to 1 from the top left) to normalized coordinates of the picture as stored.
+ArAffine ArFrame_display_transform(*ArFrame self, float width, float height) {
+    return self.intrinsics.display_transform(self.image.rotation, (double)width, (double)height);
+}
+
+// The ray from the camera through the point (x, y) of a viewport `width` x `height` (from
+// the top left) that the picture covers.
+ArRay ArFrame_ray(*ArFrame self, float x, float y, float width, float height) {
+    return self.intrinsics.ray(self.camera, self.image.rotation, (double)width, (double)height, (double)x, (double)y);
+}
+
+// Hit-tests the world under the point (x, y) of a viewport `width` x `height` against
+// `targets` (AR_HIT_PLANES, AR_HIT_ESTIMATED, or both), nearest first. Writes up to `max`
+// results to `out` and returns how many. Call it in the frame handler.
+int ArFrame_hit_test(*ArFrame self, float x, float y, float width, float height, int targets, *ArHit out, int max) {
+    ArRay ray = self.ray(x, y, width, height);
+    return ar_hit_test_ray(ray, targets, out, max);
+}
+
+// Hit-tests the world along a ray in world space (see ArFrame_hit_test).
+int ar_hit_test_ray(ArRay ray, int targets, *ArHit out, int max) {
+    float[6] r = {ray.origin.x, ray.origin.y, ray.origin.z, ray.direction.x, ray.direction.y, ray.direction.z};
+    double[AR_HIT_INFO * AR_MAX_HITS] values;
+    if (max > AR_MAX_HITS) { max = AR_MAX_HITS; }
+    if (max <= 0) { return 0; }
+    int n = ar_native_hit_test(&r[0], targets, &values[0], max);
+    if (n < 0) { n = 0; }
+    if (n > max) { n = max; }
+    int kept = 0;
+    for (i in 0..n) {
+        *double v = &values[i * AR_HIT_INFO];
+        ArHit hit = ArHit{distance: (float)v[0], kind: (int)v[1], plane: (int64)v[2], pose: ar_mat4_from(&v[3])};
+        if (!ar_mat4_finite(hit.pose)) { continue; }
+        out[kept] = hit;
+        kept++;
+    }
+    return kept;
+}
+
+// Adds an anchor at `pose` (world space); returns its id, or 0 when the session is not
+// running. Its pose follows the world as tracking improves (frame.anchors).
+int64 ar_anchor_add(ArMat4 pose) { return ar_native_anchor_add(&pose.m[0], 0); }
+
+// Adds an anchor at a hit; on Android one on a plane is attached to the plane, so it moves
+// with it. Returns its id, or 0.
+int64 ar_anchor_add_hit(*ArHit hit) { return ar_native_anchor_add(&hit.pose.m[0], hit.plane); }
+
+// Removes the anchor `id`; it is gone from the next frame.
+void ar_anchor_remove(int64 id) { ar_native_anchor_remove(id); }
+
+// The latest render's frame handler and the options it asked for, kept in the hook's slot.
+struct ArSessionHandler { fn(*ArFrame)->void handler; ArOptions options; bool asked; }
+
+// How many use_ar_session scopes are mounted, and the flags the first asked for.
+int ar_session_users;
+int ar_session_flags;
+
+// Frees a frame handler's closure; use_ar_session calls it when it replaces or drops it.
+void ar_release_handler(escaping fn(*ArFrame)->void handler) { free_closure(handler); }
+
+// Borrows the newest frame from the platform, hands it to `handler` and gives it back.
+void ar_deliver_frame(fn(*ArFrame)->void handler) {
+    int64[AR_IMAGE_INFO] image;
+    double[AR_CAMERA_INFO] camera;
+    if (ar_native_frame_acquire(&image[0], &camera[0]) == 0) { return; }
+    ArFrame frame;
+    if (ar_image_read(&image[0], &frame.image) && ar_camera_read(&camera[0], &frame)) {
+        ar_frame_fill(&frame, ar_session_flags);
+        handler(&frame);
+    }
+    ar_native_frame_release();
+}
+
+// Runs a world-tracking session while the scope is mounted, and hands `on_frame` each new
+// frame on the UI thread, borrowed for the call (copy what you keep). A frame that arrives
+// while it runs replaces the one waiting: a slow handler gets fewer, newer frames. New
+// options start the session again with them. One session runs at a time; mount one per
+// screen.
+void use_ar_session(ArOptions options, escaping fn(*ArFrame)->void on_frame) {
+    static int tag;
+    *Slot slot = ui_slot(10, &tag);
+    *ArSessionHandler held = (*ArSessionHandler)slot.data;
+    if (held == null) {
+        held = alloc<ArSessionHandler>(1);
+        slot.data = held;
+        slot.dispose = void() { ar_release_handler(held.handler); free(held); };
+    } else { ar_release_handler(held.handler); }
+    held.handler = on_frame;
+    int flags = ar_flags(options);
+    if (held.asked && (flags != ar_flags(held.options) || held.options.image_width != options.image_width ||
+                       held.options.image_height != options.image_height)) {
+        ar_session_flags = flags;
+        ar_native_session(1, flags, options.image_width, options.image_height);
+    }
+    held.options = options;
+    use_native_event("ar_frame", void(string payload) { ar_deliver_frame(held.handler); });
+    use_mount(void() {
+        ar_session_users++;
+        held.asked = true;
+        ar_session_flags = ar_flags(held.options);
+        ar_native_session(1, ar_session_flags, held.options.image_width, held.options.image_height);
+    }, void() {
+        ar_session_users--;
+        if (ar_session_users == 0) { ar_native_session(0, 0, 0, 0); }
+    });
+}
+
+// The latest render's status handler, kept in the hook's slot.
+struct ArStatusHandler { fn(int)->void handler; }
+
+// The last status the platform reported (an ArStatus).
+int ar_last_status = ArStarting;
+
+// Frees a status handler's closure; use_ar_status calls it when it replaces or drops it.
+void ar_release_status_handler(escaping fn(int)->void handler) { free_closure(handler); }
+
+// `on_status` gets each ArStatus the session reports while the scope is mounted: running,
+// or why there is no AR (unsupported, denied, installing, failed, paused).
+void use_ar_status(escaping fn(int)->void on_status) {
+    static int tag;
+    *Slot slot = ui_slot(10, &tag);
+    *ArStatusHandler held = (*ArStatusHandler)slot.data;
+    if (held == null) {
+        held = alloc<ArStatusHandler>(1);
+        slot.data = held;
+        slot.dispose = void() { ar_release_status_handler(held.handler); free(held); };
+    } else { ar_release_status_handler(held.handler); }
+    held.handler = on_status;
+    use_native_event("ar", void(string payload) {
+        ar_last_status = ar_read_status(payload);
+        held.handler(ar_last_status);
+    });
+}
