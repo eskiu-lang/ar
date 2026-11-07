@@ -86,6 +86,7 @@ static int paused;
 static int install_requested;
 static int sensor_orientation = 90;
 static volatile int display_rotation;
+static int display_width, display_height;
 static int64_t last_timestamp;
 
 static pthread_t thread;
@@ -560,6 +561,7 @@ static void begin(JNIEnv *env, jobject activity) {
         }
         p_ArFrame_create(session, &frame);
         chooseCameraConfig();
+        if (display_width > 0) p_ArSession_setDisplayGeometry(session, display_rotation, display_width, display_height);
     } else {
         p_ArSession_pause(session);
     }
@@ -600,6 +602,8 @@ JNIEXPORT void JNICALL Java_org_eskiu_ar_EskiuAr_nativeStart(JNIEnv *env, jclass
 JNIEXPORT void JNICALL Java_org_eskiu_ar_EskiuAr_nativeDisplay(JNIEnv *env, jclass type, jint rotation, jint width, jint height) {
     (void)env; (void)type;
     display_rotation = rotation;
+    display_width = width;
+    display_height = height;
     pthread_mutex_lock(&session_lock);
     if (session) p_ArSession_setDisplayGeometry(session, rotation, width, height);
     pthread_mutex_unlock(&session_lock);
