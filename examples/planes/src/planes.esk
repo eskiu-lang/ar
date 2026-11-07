@@ -1,0 +1,77 @@
+// The app's screen: what the session reports, refreshed with each frame. The picture itself
+// would be drawn with eskiu-gpu (docs/drawing.md); this example shows the data as text.
+import <string>;
+import <ui>;
+import <ar>;
+
+*Signal<int> planes_tick;
+*Signal<int> planes_status;
+
+// What the last frame said, as text, and whether the next frame places an anchor or clears
+// them.
+String planes_summary;
+bool planes_place;
+bool planes_clear;
+List<int64> planes_anchors;
+
+string planes_status_text(int status) {
+    if (status == ArRunning) { return "Running"; }
+    if (status == ArUnsupported) { return "AR is not available on this device"; }
+    if (status == ArDenied) { return "Allow the camera in the system's settings"; }
+    if (status == ArInstalling) { return "Installing Google Play Services for AR"; }
+    if (status == ArPaused) { return "Paused"; }
+    if (status == ArFailed) { return "The session failed"; }
+    return "Starting";
+}
+
+string planes_tracking_text(int tracking) {
+    if (tracking == ArTrackingNormal) { return "normal"; }
+    if (tracking == ArTrackingLimited) { return "limited"; }
+    return "none";
+}
+
+void planes_read(*ArFrame frame) {
+    if (planes_clear) {
+        for (i in 0..planes_anchors.size) { ar_anchor_remove(planes_anchors.data[i]); }
+        planes_anchors.clear();
+        planes_clear = false;
+    }
+    if (planes_place) {
+        planes_place = false;
+        // The middle of the picture, in a viewport the size of the upright picture.
+        float w = (float)(frame.image.rotation % 180 == 0 ? frame.image.width : frame.image.height);
+        float h = (float)(frame.image.rotation % 180 == 0 ? frame.image.height : frame.image.width);
+        ArHit[4] hits;
+        int n = frame.hit_test(w / 2.0, h / 2.0, w, h, AR_HIT_PLANES | AR_HIT_ESTIMATED, &hits[0], 4);
+        if (n > 0) {
+            int64 id = ar_anchor_add_hit(&hits[0]);
+            if (id != 0) { planes_anchors.push(id); }
+        }
+    }
+    ArVec3 at = ar_mat4_position(frame.camera);
+    String_format(&planes_summary, "Tracking %s\nCamera at %.2f, %.2f, %.2f m\nPicture %dx%d, turned %d\n",
+                  planes_tracking_text(frame.tracking), at.x, at.y, at.z, frame.image.width, frame.image.height,
+                  frame.image.rotation);
+    for (i in 0..frame.plane_count) {
+        *ArPlane p = &frame.planes[i];
+        if (p.subsumed_by != 0) { continue; }
+        string kind = p.alignment == ArVertical ? "Wall" : (p.alignment == ArHorizontalDown ? "Ceiling" : "Floor or table");
+        String_appendf(&planes_summary, "%s %.1f x %.1f m (%d points)\n", kind, p.extent_x, p.extent_z, p.polygon_count);
+    }
+    String_appendf(&planes_summary, "Anchors %d", frame.anchor_count);
+    if (frame.light.valid) { String_appendf(&planes_summary, "\nLight %.2f, %.0f K", frame.light.intensity, frame.light.temperature); }
+    planes_tick.set(planes_tick.value + 1);
+}
+
+void Planes() {
+    Column(Style{padding: 24, gap: 12}) {
+        use_ar_status(void(int status) { planes_status.set(status); });
+        use_ar_session(ArOptions{horizontal: true, vertical: true}, void(*ArFrame frame) { planes_read(frame); });
+        TextWith(Style{font_size: 22, font_weight: 700}, "Planes");
+        Text(planes_status_text(planes_status.get()));
+        planes_tick.get();
+        Text(planes_summary.data == null ? "" : planes_summary.data);
+        Button("Place an anchor in the middle") { planes_place = true; }
+        Button("Clear the anchors") { planes_clear = true; }
+    }
+}

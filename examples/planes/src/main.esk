@@ -1,0 +1,15 @@
+// Planes: an AR session's tracking, the planes it finds, its light estimate, and anchors
+// placed where the middle of the picture meets a plane. `ui run ios` (or android) on a
+// device; the simulator and the browser say AR is not available.
+import "planes.esk";
+
+void ui_app_start(int which) {
+    planes_tick = signal_new<int>(0);
+    planes_status = signal_new<int>(ArStarting);
+    ui_mount() { Planes(); }
+}
+
+void ui_app_stop() {
+    planes_tick.free();
+    planes_status.free();
+}

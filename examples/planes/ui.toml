@@ -1,0 +1,5 @@
+[app]
+name = "Planes"
+
+[ios.plist]
+NSCameraUsageDescription = "Planes finds the floors, tables and walls around you"
