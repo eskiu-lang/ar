@@ -1,5 +1,6 @@
 # What an app that depends on this package gets. An app's own ui.toml wins for the same key,
-# so it can say in its own words why it uses the camera.
+# so it can say in its own words why it uses the camera, and an app that needs AR to work at
+# all can make ARCore "required" (docs/README.md).
 [ios]
 frameworks = ["ARKit", "CoreVideo"]
 
@@ -9,3 +10,8 @@ NSCameraUsageDescription = "Shows the world around you in augmented reality"
 [android]
 permissions = ["android.permission.CAMERA"]
 dependencies = ["com.google.ar:core:1.57.0"]
+
+# "optional": the app installs on devices without ARCore, where the session reports
+# ArUnsupported. Needs the ui tool with [android.meta_data] (eskiu-ui after 0.3.0).
+[android.meta_data]
+"com.google.ar.core" = "optional"
