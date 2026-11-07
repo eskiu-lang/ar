@@ -123,7 +123,7 @@ delegate gets an `ARFrame` per camera frame.
 | Camera picture | `ARFrame.capturedImage`: a `CVPixelBuffer`, `kCVPixelFormatType_420YpCbCr8BiPlanarFullRange` (NV12, full range); the matrix is read from its YCbCr attachment, BT.601 |
 | Camera pose | `ARCamera.transform`: camera to world, axes relative to the image (landscape, home button right) |
 | Intrinsics | `ARCamera.intrinsics` (fx, fy, cx, cy) for `ARCamera.imageResolution` |
-| Projection and display transform | computed in Eskiu from the intrinsics, matching `projectionMatrixForOrientation:viewportSize:zNear:zFar:` and `displayTransformForOrientation:viewportSize:` (aspect fill) |
+| Projection and display transform | computed in Eskiu from the intrinsics with the aspect-fill fit that `projectionMatrixForOrientation:viewportSize:zNear:zFar:` and `displayTransformForOrientation:viewportSize:` use (comparing the two on a device is left to do) |
 | Planes | `ARPlaneAnchor`: `alignment`, `center`, `extent`, `geometry.boundaryVertices` |
 | Anchors | `ARAnchor initWithTransform:`, `addAnchor:`, `removeAnchor:` |
 | Hit tests | `ARRaycastQuery initWithOrigin:direction:allowingTarget:alignment:` and `[session raycast:]`, with the ray computed in Eskiu |

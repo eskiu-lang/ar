@@ -308,7 +308,34 @@ void hook() {
     vertical.free();
 }
 
+// eskiu-gpu's GpuYuvImage and ui-camera's CameraFrame, field for field, so a pointer to an
+// ArCameraImage reads as either.
+struct YuvPlane { *uint8 data; int row_stride; int pixel_stride; int64 size; }
+struct YuvImage {
+    int width;
+    int height;
+    int format;
+    int plane_count;
+    YuvPlane[3] planes;
+    int rotation;
+    int64 timestamp_ns;
+    bool front;
+    int matrix;
+    bool full_range;
+}
+
+void layout() {
+    ArCameraImage a;
+    *YuvImage y = (*YuvImage)&a;
+    check(sizeof(ArCameraImage) == sizeof(YuvImage), "the picture's size is GpuYuvImage's");
+    check((*uint8)&y.planes[2].size - (*uint8)&a == (*uint8)&a.planes[2].size - (*uint8)&a, "plane fields line up");
+    check((*uint8)&y.rotation - (*uint8)&a == (*uint8)&a.rotation - (*uint8)&a, "rotation lines up");
+    check((*uint8)&y.full_range - (*uint8)&a == (*uint8)&a.full_range - (*uint8)&a, "full_range lines up");
+    check(sizeof(ArMat4) == 64, "ArMat4 is 64 bytes, as Mat4");
+}
+
 int main() {
+    layout();
     bad_frames();
     hook();
     printf("PASS session\n");
