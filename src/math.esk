@@ -235,9 +235,36 @@ ArVec3 ArIntrinsics_world_to_image(*ArIntrinsics self, ArMat4 camera, ArVec3 p) 
     return ArVec3{(float)((double)self.fx * c.x / depth + self.cx), (float)((double)self.cy - (double)self.fy * c.y / depth), (float)depth};
 }
 
-// The RGB tint of light at a color temperature in kelvin, scaled so 6500 K is white (1, 1,
-// 1): ARKit's ambientColorTemperature as a color. Tanner Helland's fit of the blackbody
-// colors, good to a few percent from 1000 to 40000 K.
+// The light estimate's scale, the same on every platform: a linear multiplier of the light,
+// 1.0 in a neutral scene (a mid-gray world under neutral light). ARKit's ambientIntensity is
+// in lumens, 1000 neutral, and already linear: over 1000. ARCore's pixel intensity is the
+// camera view's mean in gamma space (0 to 1); Google's reference says to take it to linear
+// space with the power 2.2 and divide by 0.18, middle gray in linear space (0.466, middle
+// gray in gamma space, is the same gray: 0.466^2.2 = 0.186).
+float ar_light_from_arkit(double lumens) {
+    if (!(lumens > 0.0)) { return 0.0; }
+    return (float)(lumens / 1000.0);
+}
+
+// ARCore's pixel intensity (gamma, 0 to 1) on the light estimate's scale (see
+// ar_light_from_arkit): 1.0 at middle gray.
+float ar_light_from_arcore(double pixel_intensity) {
+    if (!(pixel_intensity > 0.0)) { return 0.0; }
+    if (pixel_intensity > 1.0) { pixel_intensity = 1.0; }
+    return (float)(pow(pixel_intensity, 2.2) / 0.18);
+}
+
+// A gamma-space color value (ARCore's color correction) in linear space, the power 2.2 of
+// Google's reference.
+float ar_gamma_to_linear(double value) {
+    if (!(value > 0.0)) { return 0.0; }
+    return (float)pow(value, 2.2);
+}
+
+// The RGB tint of light at a color temperature in kelvin, in linear RGB, scaled so 6500 K is
+// white (1, 1, 1): ARKit's ambientColorTemperature as a color. Tanner Helland's fit of the
+// blackbody colors (gamma-space values, good to a few percent from 1000 to 40000 K), taken
+// to linear space with the power 2.2 like ARCore's color correction.
 ArVec3 ar_temperature_rgb(float kelvin) {
     double t = (double)kelvin / 100.0;
     if (t < 10.0) { t = 10.0; }
@@ -258,8 +285,5 @@ ArVec3 ar_temperature_rgb(float kelvin) {
     double r0 = 255.0;
     double g0 = 99.4708025861 * log(65.0) - 161.1195681661;
     double b0 = 138.5177312231 * log(55.0) - 305.0447927307;
-    if (r < 0.0) { r = 0.0; }
-    if (g < 0.0) { g = 0.0; }
-    if (b < 0.0) { b = 0.0; }
-    return ArVec3{(float)(r / r0), (float)(g / g0), (float)(b / b0)};
+    return ArVec3{ar_gamma_to_linear(r / r0), ar_gamma_to_linear(g / g0), ar_gamma_to_linear(b / b0)};
 }

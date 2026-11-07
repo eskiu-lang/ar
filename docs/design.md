@@ -112,9 +112,8 @@ with `dlsym`, so the app's library builds with only the NDK, and a device withou
   it, the ui tool needs that key (a small change to `tools/ui/android.esk`).
 - That an `ArTrackable` pointer stays the same for the same plane between frames (the
   package keys plane ids on it, as Google's `hello_ar_c` does with its plane color map).
-- Light: the scale that makes ARCore's pixel intensity comparable with ARKit's ambient
-  intensity (the package divides by 0.466, ARCore's mid-gray, for `intensity` 1.0 at a
-  neutral scene).
+- Light: that ARCore's pixel intensity on the package's scale (below) reads near 1.0 where
+  ARKit reads near 1000 lumens in the same room.
 - That `ArSession_update` in `AR_UPDATE_MODE_LATEST_CAMERA_IMAGE` runs well from the
   package's own thread (attached to the JVM, no GL), polled every 4 ms when no new frame is
   in.

@@ -298,15 +298,16 @@ int ar_native_points(float *out, int max_points) {
     return n;
 }
 
-// Intensity 1.0 at ARKit's neutral 1000 lumens; the color is left to Eskiu, which computes
-// it from the temperature.
+// ARKit's own values: the ambient intensity in lumens (1000 neutral) and the color
+// temperature, source 1 (ARKit); Eskiu puts them on the package's scale (ar_light_read).
 int ar_native_light(double *info) {
     ARLightEstimate *light = lent.lightEstimate;
-    for (int i = 0; i < 41; i++) info[i] = 0;
+    for (int i = 0; i < 42; i++) info[i] = 0;
     if (!light) return 0;
     info[0] = 1;
-    info[1] = light.ambientIntensity / 1000.0;
+    info[1] = light.ambientIntensity;
     info[2] = light.ambientColorTemperature;
+    info[41] = 1;
     return 1;
 }
 
@@ -371,6 +372,7 @@ int ar_native_hit_test(float *ray, int targets, double *out, int max_hits) {
 }
 
 double ar_native_anchor_add(float *pose, double plane) {
+    (void)plane;
     if (!session || !running) return 0;
     simd_float4x4 m;
     for (int c = 0; c < 4; c++) m.columns[c] = simd_make_float4(pose[c * 4], pose[c * 4 + 1], pose[c * 4 + 2], pose[c * 4 + 3]);

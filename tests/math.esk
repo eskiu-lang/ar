@@ -153,12 +153,29 @@ void test_temperature() {
     check(cool.z > cool.x, "10000 K is cool");
 }
 
+// One light scale: linear, 1.0 in a neutral scene, from ARKit's lumens and ARCore's gamma
+// pixel intensity alike.
+void test_light_scale() {
+    check(near_eq((double)ar_light_from_arkit(1000.0), 1.0, 1e-6), "ARKit's 1000 lumens is 1.0");
+    check(near_eq((double)ar_light_from_arkit(2000.0), 2.0, 1e-6), "ARKit's scale is linear");
+    check(ar_light_from_arkit(-5.0) == 0.0 && ar_light_from_arkit(0.0 / 0.0) == 0.0, "no negative or NaN light");
+    // Linear middle gray (0.18) in gamma space is 1.0; 0.466 (gamma middle gray) is within 4%.
+    check(near_eq((double)ar_light_from_arcore(pow(0.18, 1.0 / 2.2)), 1.0, 1e-5), "ARCore's middle gray is 1.0");
+    check(near_eq((double)ar_light_from_arcore(0.466), 1.0, 0.04), "0.466 is middle gray too");
+    // Twice the light in linear space is 2^(1/2.2) times the gamma value.
+    double p = 0.3;
+    check(near_eq((double)ar_light_from_arcore(p * pow(2.0, 1.0 / 2.2)) / (double)ar_light_from_arcore(p), 2.0, 1e-4), "ARCore's scale is linear");
+    check(ar_light_from_arcore(0.0) == 0.0 && near_eq((double)ar_light_from_arcore(1.0), 1.0 / 0.18, 1e-4), "black and white");
+    check(near_eq((double)ar_gamma_to_linear(0.5), pow(0.5, 2.2), 1e-6) && ar_gamma_to_linear(1.0) == 1.0, "gamma to linear");
+}
+
 int main() {
     test_basics();
     test_display_transform();
     test_consistency();
     test_projection();
     test_temperature();
+    test_light_scale();
     if (failures > 0) {
         printf("%d failures\n", failures);
         return 1;

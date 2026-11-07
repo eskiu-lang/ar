@@ -65,8 +65,30 @@ last one.
 | `planes`, `plane_count` | `ArPlane`s: `id`, `alignment` (`ArHorizontalUp`, `ArHorizontalDown`, `ArVertical`), `tracking`, `pose` (the center, y along the normal), `extent_x`, `extent_z`, the outline `polygon` (x, z about the center), `subsumed_by` (Android: the plane that took this one over). |
 | `anchors`, `anchor_count` | The app's anchors with their current poses. |
 | `points`, `point_count` | Feature points (`position`, `confidence`; 1 on iOS). |
-| `light` | `ArLight`: `valid`, `intensity` (1.0 is a neutral scene), `temperature` (kelvin, iOS), `color` (a tint), and with `light_hdr` on Android the main light and 9 RGB spherical harmonics. |
+| `light` | `ArLight`: `valid`, `intensity` (linear, 1.0 is a neutral scene; see [Light](#light)), `temperature` (kelvin, iOS), `color` (a linear tint), `raw_intensity` and `source` (the platform's own value and where it came from), and with `light_hdr` on Android the main light and 9 RGB spherical harmonics. |
 | `depth` | `ArDepth`: size, format (`ArDepthMeters32` on iOS, `ArDepthMillimeters16` on Android), rows, `data` (null when none). `ArDepth_meters(x, y)` reads one pixel. It lines up with the picture as the sensor gives it. |
+
+### Light
+
+`frame.light.intensity` has one scale on every platform: a **linear** multiplier of the
+light, **1.0 in a neutral scene** (a mid-gray world under neutral light), so a model's
+lighting is multiplied by it as it is.
+
+| Platform | Its value | On the package's scale |
+|---|---|---|
+| iOS | `ARLightEstimate.ambientIntensity`, lumens, 1000 neutral (Apple) | `ambientIntensity / 1000` |
+| Android | `ArLightEstimate_getPixelIntensity`, the camera view's mean in gamma space, 0 to 1 | `pow(p, 2.2) / 0.18`: to linear space, over linear middle gray, as Google's reference says for linear rendering |
+
+Google's reference also gives `p / 0.466` (0.466 is middle gray in gamma space) for
+rendering in gamma space; 0.466 and 0.18 are the same gray (0.466^2.2 = 0.186), so both
+are 1.0 there, but only the linear one doubles when the light doubles, as ARKit's does.
+`ar_light_from_arkit` and `ar_light_from_arcore` are the conversions, and `raw_intensity`
+keeps the platform's value.
+
+`color` is a linear RGB tint: ARCore's color correction (gamma space, green 1) to the power
+2.2, or on iOS the color of `temperature` (`ar_temperature_rgb`, white at 6500 K). With
+`light_hdr` on Android, `intensity` and `color` are 1.0 and the light is the main light and
+the spherical harmonics, in ARCore's units.
 
 ### Geometry for your viewport
 

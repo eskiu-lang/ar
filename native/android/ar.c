@@ -62,7 +62,7 @@ typedef struct {
     double anchors[MAX_ANCHORS][18];
     float *points;
     int point_count;
-    double light[41];
+    double light[42];
     int has_light;
     uint16_t *depth;
     size_t depth_cap;
@@ -345,8 +345,9 @@ static void readPoints(Snapshot *s) {
     p_ArPointCloud_release(cloud);
 }
 
-// Ambient mode: intensity over ARCore's mid gray (0.466) and the color correction.
-// Environmental HDR: the main light and the spherical harmonics.
+// ARCore's own values, which Eskiu puts on the package's scale (ar_light_read). Ambient mode
+// (source 2): the pixel intensity and color correction, both in gamma space. Environmental
+// HDR (source 3): the main light and the spherical harmonics.
 static void readLight(Snapshot *s) {
     s->has_light = 0;
     memset(s->light, 0, sizeof(s->light));
@@ -364,20 +365,20 @@ static void readLight(Snapshot *s) {
             p_ArLightEstimate_getEnvironmentalHdrMainLightDirection(session, light, d);
             p_ArLightEstimate_getEnvironmentalHdrMainLightIntensity(session, light, i3);
             p_ArLightEstimate_getEnvironmentalHdrAmbientSphericalHarmonics(session, light, sh);
-            s->light[1] = 1;
-            s->light[3] = s->light[4] = s->light[5] = 1;
             s->light[6] = 1;
             for (int k = 0; k < 3; k++) { s->light[7 + k] = d[k]; s->light[10 + k] = i3[k]; }
             s->light[13] = 1;
             for (int k = 0; k < 27; k++) s->light[14 + k] = sh[k];
+            s->light[41] = 3;
         } else {
             float intensity = 0, color[4] = {1, 1, 1, 1};
             p_ArLightEstimate_getPixelIntensity(session, light, &intensity);
             p_ArLightEstimate_getColorCorrection(session, light, color);
-            s->light[1] = intensity / 0.466;
+            s->light[1] = intensity;
             s->light[3] = color[0];
             s->light[4] = color[1];
             s->light[5] = color[2];
+            s->light[41] = 2;
         }
     }
     p_ArLightEstimate_destroy(light);

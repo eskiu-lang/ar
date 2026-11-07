@@ -113,12 +113,21 @@ struct ArAnchor { int64 id; int tracking; ArMat4 pose; }
 // A feature point in world space and the platform's confidence in it (0 to 1; 1 on iOS).
 struct ArPoint { ArVec3 position; float confidence; }
 
-// The light estimate. `intensity` is 1.0 in a neutral scene (ARKit's ambient intensity over
-// 1000; ARCore's pixel intensity over its mid gray), `temperature` the color temperature in
-// kelvin (ARKit; 6500 on Android) and `color` the tint to multiply lighting by (from the
-// temperature on iOS, ARCore's color correction). With ARCore's environmental HDR mode the
-// main light's direction (toward the light) and intensity, and 9 RGB spherical harmonics
-// coefficients of the ambient light.
+// Where a light estimate comes from: none, ARKit (ambient intensity in lumens and a color
+// temperature), ARCore's ambient intensity mode (pixel intensity and color correction in
+// gamma space), ARCore's environmental HDR mode, or WebXR's light probe.
+enum ArLightSource { ArLightNone, ArLightARKit, ArLightARCore, ArLightARCoreHdr, ArLightWebXR }
+
+// The light estimate, on one scale on every platform. `intensity` is a linear multiplier,
+// 1.0 in a neutral scene: ARKit's ambient intensity over 1000 (its neutral), ARCore's pixel
+// intensity taken to linear space and over middle gray (ar_light_from_arcore). `color` is a
+// linear RGB tint to multiply lighting by, green 1 on ARCore (its color correction, taken to
+// linear space), from `temperature` (kelvin, ARKit; 6500 elsewhere) on iOS. `raw_intensity`
+// is the platform's own value (lumens, or ARCore's gamma pixel intensity) and `source` says
+// which (an ArLightSource). With ARCore's environmental HDR mode (and WebXR's light probe)
+// `intensity` is 1.0 and the light is the main light's direction (toward the light) and
+// linear RGB intensity, and 9 RGB spherical harmonics coefficients of the ambient light, in
+// the platform's order and scale.
 struct ArLight {
     bool valid;
     float intensity;
@@ -129,6 +138,8 @@ struct ArLight {
     ArVec3 main_intensity;
     bool has_harmonics;
     float[27] harmonics;
+    float raw_intensity;
+    int source;
 }
 
 // A depth image, aligned with the camera picture (as the sensor gives it, often smaller):
@@ -210,8 +221,9 @@ const int AR_PLANE_INFO = 22;
 const int AR_ANCHOR_INFO = 18;
 
 // The light: valid, intensity, temperature, color r g b, has_main, direction x y z,
-// intensity r g b, has_harmonics, then 27 harmonics coefficients.
-const int AR_LIGHT_INFO = 41;
+// intensity r g b, has_harmonics, 27 harmonics coefficients, then the source (an
+// ArLightSource). Intensity and color are the platform's own (ar_light_read scales them).
+const int AR_LIGHT_INFO = 42;
 
 // A hit: distance, kind, plane id, the pose's 16 values.
 const int AR_HIT_INFO = 19;
@@ -395,11 +407,14 @@ void ar_frame_fill(*ArFrame frame, int flags) {
     if ((flags & AR_FLAG_DEPTH) != 0 && ar_native_depth(&depth[0]) != 0) { ar_depth_read(&depth[0], &frame.depth); }
 }
 
-// The light values the native side filled, as an ArLight.
+// The light values the native side filled, as an ArLight on the package's scale: ARKit's
+// lumens over 1000 and its temperature as a color, ARCore's gamma pixel intensity and color
+// correction in linear space (ar_light_from_arkit, ar_light_from_arcore).
 void ar_light_read(*double info, *ArLight out) {
     *out = ArLight{};
     out.valid = info[0] != 0.0;
-    out.intensity = (float)info[1];
+    double raw = info[1];
+    out.raw_intensity = (float)raw;
     out.temperature = (float)info[2];
     out.color = ArVec3{(float)info[3], (float)info[4], (float)info[5]};
     out.has_main = info[6] != 0.0;
@@ -407,10 +422,22 @@ void ar_light_read(*double info, *ArLight out) {
     out.main_intensity = ArVec3{(float)info[10], (float)info[11], (float)info[12]};
     out.has_harmonics = info[13] != 0.0;
     for (i in 0..27) { out.harmonics[i] = (float)info[14 + i]; }
-    // ARKit gives a temperature and no color: the color is the temperature's tint.
-    if (out.color.x == 0.0 && out.color.y == 0.0 && out.color.z == 0.0 && out.temperature > 0.0) {
-        out.color = ar_temperature_rgb(out.temperature);
+    int source = (int)info[41];
+    if (source < ArLightNone || source > ArLightWebXR) { source = ArLightNone; }
+    out.source = source;
+    out.intensity = (float)raw;
+    if (source == ArLightARKit) {
+        out.intensity = ar_light_from_arkit(raw);
+        out.color = ar_temperature_rgb(out.temperature > 0.0 ? out.temperature : 6500.0);
+    } else if (source == ArLightARCore) {
+        out.intensity = ar_light_from_arcore(raw);
+        out.color = ArVec3{ar_gamma_to_linear((double)out.color.x), ar_gamma_to_linear((double)out.color.y), ar_gamma_to_linear((double)out.color.z)};
+    } else if (source == ArLightARCoreHdr || source == ArLightWebXR) {
+        out.intensity = 1.0;
+        out.color = ArVec3{1.0, 1.0, 1.0};
     }
+    if (out.temperature <= 0.0) { out.temperature = 6500.0; }
+    if (!(out.intensity >= 0.0) || out.intensity > 1e6) { out.intensity = 0.0; }
 }
 
 // The depth values the native side filled, checked, as an ArDepth; left empty when they do

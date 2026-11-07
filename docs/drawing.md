@@ -43,7 +43,8 @@ Result<int, string> draw(*ArFrame frame) {
   goes from 0 at `near` to 1 at `far`, as eskiu-gpu's own projections.
 - **Content on a plane or an anchor.** A model placed at `plane.pose` or `anchor.pose`
   (times its own transform) sits on that surface; the pose's y axis is the surface's normal.
-- **Light.** Multiply the model's lighting by `frame.light.intensity` and `frame.light.color`;
+- **Light.** Multiply the model's lighting (in linear space) by `frame.light.intensity` and
+  `frame.light.color`, both linear and 1.0 in a neutral scene ([session](session.md#light));
   with `light_hdr` on Android, `main_direction` and `main_intensity` give a directional light
   and `harmonics` the ambient light (9 RGB coefficients, ARCore's order and scale).
 - **Occlusion.** `frame.depth` lines up with the picture as stored; sample it through

@@ -184,6 +184,16 @@ struct ArPoint { ArVec3 position; float confidence; }
 
 A feature point in world space and the platform's confidence in it (0 to 1; 1 on iOS).
 
+### ArLightSource
+
+```eskiu
+enum ArLightSource { ArLightNone, ArLightARKit, ArLightARCore, ArLightARCoreHdr, ArLightWebXR }
+```
+
+Where a light estimate comes from: none, ARKit (ambient intensity in lumens and a color
+temperature), ARCore's ambient intensity mode (pixel intensity and color correction in
+gamma space), ARCore's environmental HDR mode, or WebXR's light probe.
+
 ### ArLight
 
 ```eskiu
@@ -197,15 +207,21 @@ struct ArLight {
     ArVec3 main_intensity;
     bool has_harmonics;
     float[27] harmonics;
+    float raw_intensity;
+    int source;
 }
 ```
 
-The light estimate. `intensity` is 1.0 in a neutral scene (ARKit's ambient intensity over
-1000; ARCore's pixel intensity over its mid gray), `temperature` the color temperature in
-kelvin (ARKit; 6500 on Android) and `color` the tint to multiply lighting by (from the
-temperature on iOS, ARCore's color correction). With ARCore's environmental HDR mode the
-main light's direction (toward the light) and intensity, and 9 RGB spherical harmonics
-coefficients of the ambient light.
+The light estimate, on one scale on every platform. `intensity` is a linear multiplier,
+1.0 in a neutral scene: ARKit's ambient intensity over 1000 (its neutral), ARCore's pixel
+intensity taken to linear space and over middle gray (ar_light_from_arcore). `color` is a
+linear RGB tint to multiply lighting by, green 1 on ARCore (its color correction, taken to
+linear space), from `temperature` (kelvin, ARKit; 6500 elsewhere) on iOS. `raw_intensity`
+is the platform's own value (lumens, or ARCore's gamma pixel intensity) and `source` says
+which (an ArLightSource). With ARCore's environmental HDR mode (and WebXR's light probe)
+`intensity` is 1.0 and the light is the main light's direction (toward the light) and
+linear RGB intensity, and 9 RGB spherical harmonics coefficients of the ambient light, in
+the platform's order and scale.
 
 ### ArDepth
 
@@ -305,11 +321,12 @@ An anchor: id, tracking, the pose's 16 values.
 ### AR_LIGHT_INFO
 
 ```eskiu
-const int AR_LIGHT_INFO = 41;
+const int AR_LIGHT_INFO = 42;
 ```
 
 The light: valid, intensity, temperature, color r g b, has_main, direction x y z,
-intensity r g b, has_harmonics, then 27 harmonics coefficients.
+intensity r g b, has_harmonics, 27 harmonics coefficients, then the source (an
+ArLightSource). Intensity and color are the platform's own (ar_light_read scales them).
 
 ### AR_HIT_INFO
 
@@ -404,7 +421,9 @@ asked.
 void ar_light_read(*double info, *ArLight out)
 ```
 
-The light values the native side filled, as an ArLight.
+The light values the native side filled, as an ArLight on the package's scale: ARKit's
+lumens over 1000 and its temperature as a color, ARCore's gamma pixel intensity and color
+correction in linear space (ar_light_from_arkit, ar_light_from_arcore).
 
 ### ar_depth_read
 
@@ -799,12 +818,44 @@ ArVec3 ArIntrinsics_world_to_image(*ArIntrinsics self, ArMat4 camera, ArVec3 p)
 The pixel of the image (as the sensor gives it) where the world point `p` appears, for a
 camera at pose `camera`; z is the distance in front of the camera (negative behind it).
 
+### ar_light_from_arkit
+
+```eskiu
+float ar_light_from_arkit(double lumens)
+```
+
+The light estimate's scale, the same on every platform: a linear multiplier of the light,
+1.0 in a neutral scene (a mid-gray world under neutral light). ARKit's ambientIntensity is
+in lumens, 1000 neutral, and already linear: over 1000. ARCore's pixel intensity is the
+camera view's mean in gamma space (0 to 1); Google's reference says to take it to linear
+space with the power 2.2 and divide by 0.18, middle gray in linear space (0.466, middle
+gray in gamma space, is the same gray: 0.466^2.2 = 0.186).
+
+### ar_light_from_arcore
+
+```eskiu
+float ar_light_from_arcore(double pixel_intensity)
+```
+
+ARCore's pixel intensity (gamma, 0 to 1) on the light estimate's scale (see
+ar_light_from_arkit): 1.0 at middle gray.
+
+### ar_gamma_to_linear
+
+```eskiu
+float ar_gamma_to_linear(double value)
+```
+
+A gamma-space color value (ARCore's color correction) in linear space, the power 2.2 of
+Google's reference.
+
 ### ar_temperature_rgb
 
 ```eskiu
 ArVec3 ar_temperature_rgb(float kelvin)
 ```
 
-The RGB tint of light at a color temperature in kelvin, scaled so 6500 K is white (1, 1,
-1): ARKit's ambientColorTemperature as a color. Tanner Helland's fit of the blackbody
-colors, good to a few percent from 1000 to 40000 K.
+The RGB tint of light at a color temperature in kelvin, in linear RGB, scaled so 6500 K is
+white (1, 1, 1): ARKit's ambientColorTemperature as a color. Tanner Helland's fit of the
+blackbody colors (gamma-space values, good to a few percent from 1000 to 40000 K), taken
+to linear space with the power 2.2 like ARCore's color correction.
