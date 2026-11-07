@@ -90,13 +90,17 @@ with `dlsym`, so the app's library builds with only the NDK, and a device withou
 
 ### What was checked without a device
 
-- Every ARCore function the package calls is exported by `libarcore_sdk_c.so` 1.57.0
-  (arm64-v8a), checked with `llvm-nm -D` against the list in `native/android/ar.c`.
-- The package's own function-pointer types were compiled against Google's
-  `arcore_c_api.h` (assigning each real function to the package's pointer type, warnings
-  as errors), so the prototypes match.
-- The Android build of a throwaway app (`ui build android`, Gradle, the ARCore dependency)
-  compiles and packages; the iOS simulator build compiles and links the ARKit code.
+- `tools/check_arcore_api.sh` (also in CI): the 100 ARCore functions the package calls,
+  declared in `native/android/ar_api.h`, compile against Google's `arcore_c_api.h` 1.57.0
+  (each real function assigned to the package's pointer type with warnings as errors, each
+  enum value compared), and every one is exported by `libarcore_sdk_c.so` 1.57.0
+  (arm64-v8a, `llvm-nm -D`). A wrong parameter type makes the check fail.
+- `native/android/ar.c` compiles with the NDK's clang (`-Wall -Wextra`, API 24).
+- A throwaway app on the package built with `ui build android` goes through Gradle with the
+  ARCore dependency: the APK holds `libarcore_sdk_c.so` for each ABI, the app's library
+  exports `ar_native_*` and the `EskiuAr` natives, `org.eskiu.ar.EskiuAr` is in the dex and
+  listed for setup, and the merged manifest has the camera permission and ARCore's own
+  entries (`com.google.ar.core.min_apk_version`, `InstallActivity`).
 
 ### What needs a device
 
@@ -111,6 +115,9 @@ with `dlsym`, so the app's library builds with only the NDK, and a device withou
 - Light: the scale that makes ARCore's pixel intensity comparable with ARKit's ambient
   intensity (the package divides by 0.466, ARCore's mid-gray, for `intensity` 1.0 at a
   neutral scene).
+- That `ArSession_update` in `AR_UPDATE_MODE_LATEST_CAMERA_IMAGE` runs well from the
+  package's own thread (attached to the JVM, no GL), polled every 4 ms when no new frame is
+  in.
 - Copy cost of the CPU image at 1280x720 (about 1.4 MB a frame) on a slow phone.
 
 ## ARKit (iOS)
@@ -148,7 +155,10 @@ filled, the newest waiting, and the lent one.
 
 ### What was checked without a device
 
-The ARKit code compiles and links in the simulator build. The simulator has no AR
+`native/ios/ar.m` compiles warning-free (`-Wall -Wextra`) for the simulator and for devices
+(iOS 15 SDK target), and the throwaway app's `ui build ios` simulator build links ARKit
+(`ARSession`, `ARWorldTrackingConfiguration`, `ARRaycastQuery`, `ARPlaneAnchor`,
+`ARAnchor`) with the camera usage text in its Info.plist. The simulator has no AR
 (`ARWorldTrackingConfiguration.isSupported` is false there), so the package reports
 `ArUnsupported` on it.
 
