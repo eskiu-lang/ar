@@ -138,7 +138,11 @@ static void runConfiguration(void) {
     [session runWithConfiguration:config options:options];
 }
 
+// Bumped by each start and stop, so a start still queued when a stop comes does nothing.
+static int startGeneration;
+
 void ar_native_session(int on, int flags, int width, int height) {
+    startGeneration++;
     if (!on) {
         ar_native_frame_release();
         [session pause];
@@ -165,8 +169,15 @@ void ar_native_session(int on, int flags, int width, int height) {
     sessionFlags = flags;
     sessionWidth = width;
     sessionHeight = height;
-    runConfiguration();
-    emit("running");
+    // Run on the next turn of the main queue, once the UI update that started the session is
+    // applied: a screen it replaces gives its camera back then, and ARKit started while
+    // another session holds the camera waits about nine seconds before it tries again.
+    int generation = startGeneration;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (generation != startGeneration) return;
+        runConfiguration();
+        emit("running");
+    });
 }
 
 void ar_native_images(int count, int tracked) {
