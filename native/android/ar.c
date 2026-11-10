@@ -868,6 +868,8 @@ int ar_native_depth(int64_t *info) {
 // A hit test on the session's current frame (the newest, a frame or two after the lent
 // snapshot), along the ray.
 int ar_native_hit_test(float *ray, int targets, double *out, int max_hits) {
+    for (int k = 0; k < 6; k++) if (!isfinite(ray[k])) return 0;
+    if (ray[3] * ray[3] + ray[4] * ray[4] + ray[5] * ray[5] < 1e-12f) return 0;
     pthread_mutex_lock(&session_lock);
     if (!session || paused || last_timestamp == 0) {
         pthread_mutex_unlock(&session_lock);

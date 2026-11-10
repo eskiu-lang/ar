@@ -451,6 +451,8 @@ int ar_native_depth(int64_t *info) {
 // planes), nearest first.
 int ar_native_hit_test(float *ray, int targets, double *out, int max_hits) {
     if (!session || !running) return 0;
+    for (int k = 0; k < 6; k++) if (!isfinite(ray[k])) return 0;
+    if (ray[3] * ray[3] + ray[4] * ray[4] + ray[5] * ray[5] < 1e-12f) return 0;
     simd_float3 origin = simd_make_float3(ray[0], ray[1], ray[2]);
     simd_float3 direction = simd_make_float3(ray[3], ray[4], ray[5]);
     NSMutableArray<ARRaycastResult *> *results = [NSMutableArray new];

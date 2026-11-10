@@ -725,6 +725,8 @@ ArRay ArFrame_ray(*ArFrame self, float x, float y, float width, float height) {
 // `targets` (AR_HIT_PLANES, AR_HIT_ESTIMATED, or both), nearest first. Writes up to `max`
 // results to `out` and returns how many. Call it in the frame handler.
 int ArFrame_hit_test(*ArFrame self, float x, float y, float width, float height, int targets, *ArHit out, int max) {
+    // Before the first picture the intrinsics are zero, and a viewport may be empty: no ray.
+    if (!(width > 0.0) || !(height > 0.0) || !(self.intrinsics.fx > 0.0) || !(self.intrinsics.fy > 0.0)) { return 0; }
     ArRay ray = self.ray(x, y, width, height);
     return ar_hit_test_ray(ray, targets, out, max);
 }
@@ -735,6 +737,10 @@ int ar_hit_test_ray(ArRay ray, int targets, *ArHit out, int max) {
     double[AR_HIT_INFO * AR_MAX_HITS] values;
     if (max > AR_MAX_HITS) { max = AR_MAX_HITS; }
     if (max <= 0) { return 0; }
+    // A ray with a non-finite part or no direction hits nothing (ARKit raises on one).
+    double len2 = (double)(ray.direction.x * ray.direction.x + ray.direction.y * ray.direction.y + ray.direction.z * ray.direction.z);
+    for (k in 0..6) { if (!(r[k] - r[k] == 0.0)) { return 0; } }
+    if (!(len2 > 1e-12)) { return 0; }
     int n = ar_native_hit_test(&r[0], targets, &values[0], max);
     if (n < 0) { n = 0; }
     if (n > max) { n = max; }
