@@ -45,3 +45,12 @@ All notable changes to this package are documented in this file. The format is b
   which needs the ui tool after eskiu-ui 0.3.0); an AR-only app sets "required" and the
   `android.hardware.camera.ar` feature in its own `ui.toml`.
 - `examples/planes`: tap to start on the web, hit tests retried over a few frames.
+
+### Fixed
+
+- `ArFrame_hit_test` before the first camera frame (no intrinsics yet) returns no hit instead
+  of handing ARKit a ray of NaNs, which crashed; a non-finite or zero ray is refused on iOS and
+  Android too.
+- iOS: the session starts once the UI update that mounted it is applied, so a screen with a
+  camera it replaces has given the camera back. ARKit started while another session still
+  held it showed no picture for about nine seconds.
