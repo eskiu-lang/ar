@@ -163,6 +163,8 @@ struct ArOptions {
     bool semantics = false;
     *ArObjectTarget objects;
     int object_count;
+    bool front_camera = false;
+    bool body = false;
     bool points = false;
     int image_width = 1280;
     int image_height = 720;
@@ -187,6 +189,12 @@ platform gives the nearest it has, as the sensor sees it, landscape), and image 
 `image_count` pictures at `images` to find (frame.images), of which ARKit follows
 `tracked_images` as they move (the others keep the pose where they were last seen; ARCore
 follows every one). The targets are copied when they change: a new array, count or field.
+`front_camera` runs the session on the front camera with face tracking (frame.faces;
+ViroReact's frontCameraEnabled): on iOS it needs the eskiu-lang/face package, which holds
+the TrueDepth calls so an app without it passes App Store review guideline 2.5.1, and the
+session reports "unsupported" without it; on Android it is ARCore's Augmented Faces.
+`body` tracks people's bodies on the rear camera (frame.bodies, ARKit's body tracking;
+iOS on A12 or later).
 
 ### ArImagePlane
 
@@ -516,6 +524,143 @@ int ArMesh_index(*ArMesh self, int k)
 
 Index k (0 to 3 * face_count) of a mesh's triangles.
 
+### ArBlendBrowDownLeft, ArBlendBrowDownRight, ArBlendBrowInnerUp, ArBlendBrowOuterUpLeft, ArBlendBrowOuterUpRight, ArBlendCheekPuff, ArBlendCheekSquintLeft, ArBlendCheekSquintRight, ArBlendEyeBlinkLeft, ArBlendEyeBlinkRight, ArBlendEyeLookDownLeft, ArBlendEyeLookDownRight, ArBlendEyeLookInLeft, ArBlendEyeLookInRight, ArBlendEyeLookOutLeft, ArBlendEyeLookOutRight, ArBlendEyeLookUpLeft, ArBlendEyeLookUpRight, ArBlendEyeSquintLeft, ArBlendEyeSquintRight, ArBlendEyeWideLeft, ArBlendEyeWideRight, ArBlendJawForward, ArBlendJawLeft, ArBlendJawOpen, ArBlendJawRight, ArBlendMouthClose, ArBlendMouthDimpleLeft, ArBlendMouthDimpleRight, ArBlendMouthFrownLeft, ArBlendMouthFrownRight, ArBlendMouthFunnel, ArBlendMouthLeft, ArBlendMouthLowerDownLeft, ArBlendMouthLowerDownRight, ArBlendMouthPressLeft, ArBlendMouthPressRight, ArBlendMouthPucker, ArBlendMouthRight, ArBlendMouthRollLower, ArBlendMouthRollUpper, ArBlendMouthShrugLower, ArBlendMouthShrugUpper, ArBlendMouthSmileLeft, ArBlendMouthSmileRight, ArBlendMouthStretchLeft, ArBlendMouthStretchRight, ArBlendMouthUpperUpLeft, ArBlendMouthUpperUpRight, ArBlendNoseSneerLeft, ArBlendNoseSneerRight, ArBlendTongueOut
+
+```eskiu
+const int ArBlendBrowDownLeft = 0;
+const int ArBlendBrowDownRight = 1;
+const int ArBlendBrowInnerUp = 2;
+const int ArBlendBrowOuterUpLeft = 3;
+const int ArBlendBrowOuterUpRight = 4;
+const int ArBlendCheekPuff = 5;
+const int ArBlendCheekSquintLeft = 6;
+const int ArBlendCheekSquintRight = 7;
+const int ArBlendEyeBlinkLeft = 8;
+const int ArBlendEyeBlinkRight = 9;
+const int ArBlendEyeLookDownLeft = 10;
+const int ArBlendEyeLookDownRight = 11;
+const int ArBlendEyeLookInLeft = 12;
+const int ArBlendEyeLookInRight = 13;
+const int ArBlendEyeLookOutLeft = 14;
+const int ArBlendEyeLookOutRight = 15;
+const int ArBlendEyeLookUpLeft = 16;
+const int ArBlendEyeLookUpRight = 17;
+const int ArBlendEyeSquintLeft = 18;
+const int ArBlendEyeSquintRight = 19;
+const int ArBlendEyeWideLeft = 20;
+const int ArBlendEyeWideRight = 21;
+const int ArBlendJawForward = 22;
+const int ArBlendJawLeft = 23;
+const int ArBlendJawOpen = 24;
+const int ArBlendJawRight = 25;
+const int ArBlendMouthClose = 26;
+const int ArBlendMouthDimpleLeft = 27;
+const int ArBlendMouthDimpleRight = 28;
+const int ArBlendMouthFrownLeft = 29;
+const int ArBlendMouthFrownRight = 30;
+const int ArBlendMouthFunnel = 31;
+const int ArBlendMouthLeft = 32;
+const int ArBlendMouthLowerDownLeft = 33;
+const int ArBlendMouthLowerDownRight = 34;
+const int ArBlendMouthPressLeft = 35;
+const int ArBlendMouthPressRight = 36;
+const int ArBlendMouthPucker = 37;
+const int ArBlendMouthRight = 38;
+const int ArBlendMouthRollLower = 39;
+const int ArBlendMouthRollUpper = 40;
+const int ArBlendMouthShrugLower = 41;
+const int ArBlendMouthShrugUpper = 42;
+const int ArBlendMouthSmileLeft = 43;
+const int ArBlendMouthSmileRight = 44;
+const int ArBlendMouthStretchLeft = 45;
+const int ArBlendMouthStretchRight = 46;
+const int ArBlendMouthUpperUpLeft = 47;
+const int ArBlendMouthUpperUpRight = 48;
+const int ArBlendNoseSneerLeft = 49;
+const int ArBlendNoseSneerRight = 50;
+const int ArBlendTongueOut = 51;
+```
+
+ARKit's 52 blend shapes, in the order of ArFace.blend_shapes (ARFaceAnchor's
+blendShapes by name, alphabetical as ARKit's documentation lists them).
+
+### ArFace
+
+```eskiu
+struct ArFace {
+    int64 id;
+    ArMat4 pose;
+    *float vertices;
+    int vertex_count;
+    *float uvs;
+    *uint8 indices;
+    int triangle_count;
+    int index_bytes;
+    float[52] blend_shapes;
+    int blend_shape_count;
+    ArMat4 left_eye;
+    ArMat4 right_eye;
+    ArVec3 look_at;
+    ArMat4 nose_tip;
+    ArMat4 forehead_left;
+    ArMat4 forehead_right;
+    int tracking;
+}
+```
+
+A face the front camera tracks (ArOptions.front_camera): an id that stays while it is
+tracked, its pose (the head's center, +Z out of the face, +Y up), and its mesh in the
+pose's space, borrowed for the handler's call: `vertex_count` positions (3 floats each),
+as many texture coordinates (2 floats each, null when the platform has none) and
+`triangle_count` triangles (`index_bytes` 2 or 4 each). The topology is fixed per
+platform (ARKit's 1220 vertices, ARCore's 468), so an index list made once stays valid.
+iOS adds `blend_shape_count` (52) expression weights from 0 to 1 (ArBlend*), the eyes'
+poses and the point they look at, in the face's space; Android adds the poses of the nose
+tip and the two forehead regions, in world space, as ARCore's Augmented Faces gives them.
+
+### ArFace_vertex
+
+```eskiu
+ArVec3 ArFace_vertex(*ArFace self, int i)
+```
+
+Vertex i of a face's mesh, in its pose's space.
+
+### ArFace_index
+
+```eskiu
+int ArFace_index(*ArFace self, int k)
+```
+
+Index k (0 to 3 * triangle_count) of a face's triangles.
+
+### ArBody
+
+```eskiu
+struct ArBody {
+    int64 id;
+    ArMat4 pose;
+    int joint_count;
+    *float joints;
+    float scale;
+    int tracking;
+}
+```
+
+A body on the rear camera (ArOptions.body, ARKit): an id, its pose (the hips, on the
+ground plane's up axis), `joint_count` joints (ARKit's 91), each a 4x4 column-major
+transform relative to the pose, borrowed for the handler's call, and the scale ARKit
+estimates for the person against its default skeleton. ar_body_joint names a joint and
+gives its parent.
+
+### ArBody_joint
+
+```eskiu
+ArMat4 ArBody_joint(*ArBody self, int j)
+```
+
+Joint j's transform relative to the body's pose.
+
 ### ArFrame
 
 ```eskiu
@@ -543,6 +688,10 @@ struct ArFrame {
     ArSemantics semantics;
     *ArTrackedObject objects;
     int object_count;
+    *ArFace faces;
+    int face_count;
+    *ArBody bodies;
+    int body_count;
 }
 ```
 
@@ -602,6 +751,35 @@ const int AR_FLAG_OBJECTS = 16384;
 ```
 
 Real objects to find (ARKit's reference objects).
+
+### AR_FLAG_FRONT, AR_FLAG_BODY
+
+```eskiu
+const int AR_FLAG_FRONT = 32768;
+const int AR_FLAG_BODY = 65536;
+```
+
+The front camera with face tracking, and body tracking.
+
+### AR_FACE_INFO
+
+```eskiu
+const int AR_FACE_INFO = 160;
+```
+
+Values ar_native_face fills: id, the pose's 16 values, the mesh (vertex pointer, vertex
+count, texture coordinate pointer, index pointer, triangle count, index bytes), 52 blend
+shape weights and how many, the eyes' poses (16 each), the look-at point (3), the nose
+tip's and the two forehead regions' poses (16 each), tracking.
+
+### AR_BODY_INFO
+
+```eskiu
+const int AR_BODY_INFO = 21;
+```
+
+Values ar_native_body fills: id, the pose's 16 values, joint count, the joints' pointer,
+estimated scale, tracking.
 
 ### AR_OBJECT_INFO
 
@@ -790,6 +968,24 @@ void ar_frame_fill(*ArFrame frame, int flags)
 
 Reads the lent frame's planes, anchors, points, light and depth into `frame`, as `flags`
 asked.
+
+### ar_face_read
+
+```eskiu
+bool ar_face_read(*double info, *ArFace out)
+```
+
+The face values the native side filled, checked; false for a face without a whole mesh
+or with a pose that is not a number. Weights are clamped to 0..1.
+
+### ar_body_joint
+
+```eskiu
+int ar_body_joint(int joint, *String name)
+```
+
+The name of body joint j (ARKit's, as "left_hand_joint") into name and its parent's index,
+-1 for the root; -2 when there is no such joint (or no body tracking on the platform).
 
 ### ar_semantics_read
 

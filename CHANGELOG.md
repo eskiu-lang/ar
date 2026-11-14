@@ -7,6 +7,12 @@ All notable changes to this package are documented in this file. The format is b
 
 ### Added
 
+- Front camera with face tracking (ViroReact's `frontCameraEnabled`): `ArOptions.front_camera`,
+  `frame.faces` (`ArFace`: pose, mesh, 52 blend shapes and eyes on iOS, region poses on
+  Android). Android uses ARCore's Augmented Faces; iOS needs the eskiu-lang/face package
+  (`face_install`), which holds the TrueDepth calls (App Store guideline 2.5.1).
+- Body tracking on iOS: `ArOptions.body`, `frame.bodies` (`ArBody`, ARKit's 91 joints),
+  `ar_body_joint`.
 - Object targets on iOS (ViroReact's ViroARObjectMarker): `ArOptions.objects`
   (`ArObjectTarget`, ARKit `.arobject` files) and `frame.objects` (`ArTrackedObject`).
 - ARCore on iOS: with Google's ARCore SDK for iOS in the app ([ios.spm]) and `GARAPIKey`,

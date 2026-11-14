@@ -185,6 +185,47 @@ int ar_native_object_add(int index, string path) {
     object_paths.appendf("%d:%s;", index, path);
     return strstr(path, "missing") == null ? 1 : 0;
 }
+float[9] face_vertices = {0.0, 0.0, 0.05, 0.02, 0.0, 0.04, 0.0, 0.03, 0.04};
+uint16[3] face_indices = {0, 1, 2};
+float[32] body_joints;
+int ar_native_face_count() { return 2; }
+void ar_native_face(int index, *double info) {
+    for (i in 0..AR_FACE_INFO) { info[i] = 0.0; }
+    info[0] = 5.0 + (double)index;
+    info[1] = 1.0; info[6] = 1.0; info[11] = 1.0; info[16] = 1.0;
+    info[15] = -0.3;
+    if (index == 0) {
+        info[17] = (double)(int64)&face_vertices[0];
+        info[18] = 3.0;
+        info[20] = (double)(int64)&face_indices[0];
+        info[21] = 1.0;
+        info[22] = 2.0;
+    }
+    info[75] = 52.0;
+    info[23 + ArBlendJawOpen] = 0.7;
+    info[23 + ArBlendEyeBlinkLeft] = 1.5;
+    info[108] = 0.1;
+    info[159] = 2.0;
+}
+int ar_native_body_count() { return 1; }
+void ar_native_body(int index, *double info) {
+    for (i in 0..AR_BODY_INFO) { info[i] = 0.0; }
+    for (j in 0..2) {
+        for (k in 0..16) body_joints[j * 16 + k] = k % 5 == 0 ? 1.0 : 0.0;
+    }
+    body_joints[16 + 13] = 0.9;
+    info[0] = 77.0;
+    info[1] = 1.0; info[6] = 1.0; info[11] = 1.0; info[16] = 1.0;
+    info[17] = 2.0;
+    info[18] = (double)(int64)&body_joints[0];
+    info[19] = 1.05;
+    info[20] = 2.0;
+}
+int ar_native_body_joint(int joint, *char name, int capacity) {
+    if (joint < 0 || joint > 1) { return -2; }
+    snprintf(name, (int64)capacity, joint == 0 ? "root" : "hips_joint");
+    return joint - 1;
+}
 int ar_native_tracked_object_count() { return 2; }
 void ar_native_tracked_object(int index, *double info) {
     for (i in 0..AR_OBJECT_INFO) { info[i] = 0.0; }
@@ -682,6 +723,25 @@ void depth_hits() {
     check(!f.depth_hit(50.0, 50.0, 100.0, 100.0, &h), "no hit without depth");
 }
 
+// Faces (front camera) and bodies: read into the frame only when asked; a face without a
+// mesh skipped, weights clamped; joints and their names.
+void faces_bodies() {
+    ArFrame f;
+    ar_frame_fill(&f, 0);
+    check(f.face_count == 0 && f.body_count == 0, "no faces or bodies unless asked");
+    check((ar_flags(ArOptions{front_camera: true, body: true}) & (AR_FLAG_FRONT | AR_FLAG_BODY)) == (AR_FLAG_FRONT | AR_FLAG_BODY), "the front and body flags");
+    ar_frame_fill(&f, AR_FLAG_FRONT | AR_FLAG_BODY);
+    check(f.face_count == 1 && f.faces[0].id == 5 && f.faces[0].pose.m[14] == (float)-0.3, "the face with a mesh, the other skipped");
+    check(f.faces[0].vertex(1).x == (float)0.02 && f.faces[0].index(2) == 2 && f.faces[0].triangle_count == 1, "its mesh");
+    check(f.faces[0].blend_shapes[ArBlendJawOpen] == (float)0.7 && f.faces[0].blend_shapes[ArBlendEyeBlinkLeft] == 1.0 &&
+          f.faces[0].look_at.x == (float)0.1 && f.faces[0].tracking == ArTrackingNormal, "blend shapes (clamped) and gaze");
+    check(f.body_count == 1 && f.bodies[0].id == 77 && f.bodies[0].joint_count == 2 && f.bodies[0].joint(1).m[13] == (float)0.9 &&
+          f.bodies[0].scale == (float)1.05, "a body and its joints");
+    String name;
+    check(ar_body_joint(1, &name) == 0 && strcmp(name.cstr(), "hips_joint") == 0 && ar_body_joint(5, &name) == -2, "joint names and parents");
+    name.free();
+}
+
 void meshes() {
     meshes_lent = true;
     ArFrame f;
@@ -702,6 +762,7 @@ int main() {
     depth_model();
     cloud_and_earth();
     objects();
+    faces_bodies();
     meshes();
     printf("PASS session\n");
     return 0;

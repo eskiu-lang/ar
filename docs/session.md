@@ -41,6 +41,18 @@ New options start the session again with them: on iOS the world is kept (same se
 configuration), on Android the session is configured again, and a new picture size makes a
 new session.
 
+## Front camera and bodies
+
+`front_camera` runs the session on the front camera with face tracking, ViroReact's
+`frontCameraEnabled`. On Android it is ARCore's Augmented Faces (no planes, the ambient light
+estimate only, no cloud anchors, as Viro sets it). On iOS the TrueDepth calls live in the
+eskiu-lang/face package, as ReactVision's react-viro-face-tracking keeps them out of ViroKit:
+Apple's review (guideline 2.5.1) scans a binary for them, so an app that does not use the
+front camera must not carry them. Import `<face>` and call `face_install()` once before the
+session starts; without it the session reports "unsupported" on iOS. `body` tracks a person
+on the rear camera with ARKit's body tracking (planes, light and image targets still work;
+depth, people occlusion and the mesh do not). Android has no body tracking.
+
 ## Status
 
 `use_ar_status` gets each `ArStatus` while its scope is mounted. `ar_last_status` keeps the
@@ -74,6 +86,8 @@ last one.
 | `images`, `image_count` | The image targets found so far (`ArTrackedImage`: target index and name, pose, size, how it is followed; [image targets](images.md)). |
 | `depth` | `ArDepth`: size, format (`ArDepthMeters32` on iOS, `ArDepthMillimeters16` on Android), rows, `data` (null when none). `ArDepth_meters(x, y)` reads one pixel. It lines up with the picture as the sensor gives it. |
 | `meshes`, `mesh_count` | `ArMesh`es: `id`, `pose`, positions (`vertex_count`, `ArMesh_vertex(i)`), normals (`ArMesh_normal(i)`) and triangles (`face_count`, `ArMesh_index(k)`), borrowed from ARKit's buffers for the handler's call. |
+| `faces`, `face_count` | With `front_camera`: `ArFace`s with `id`, `pose` (the head's center, +Z out of the face), the mesh in the pose's space (`vertex_count`, `ArFace_vertex(i)`, `uvs`, `triangle_count`, `ArFace_index(k)`; ARKit's fixed 1220-vertex topology, ARCore's 468), on iOS the 52 `blend_shapes` (`ArBlend*`, 0 to 1), the eyes' poses and `look_at`, on Android the `nose_tip`, `forehead_left` and `forehead_right` poses. |
+| `bodies`, `body_count` | With `body` (iOS, A12 or later): `ArBody`s with `id`, `pose` (the hips), `joint_count` joints (`ArBody_joint(j)`, relative to the pose; ARKit's 91), and the `scale` ARKit estimates. `ar_body_joint(j, &name)` names a joint and returns its parent. |
 
 ### Light
 
