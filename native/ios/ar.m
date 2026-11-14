@@ -75,6 +75,7 @@ static NSArray<ARObjectAnchor *> *lentObjects;
 static NSMutableArray *objectTargets;
 static NSMutableDictionary<NSUUID *, NSNumber *> *objectIds;
 static NSArray *lentMeshes;
+static NSArray *lentBodies;
 
 // Ids Eskiu sees: planes by their anchor's identifier, the app's anchors both ways.
 static NSMutableDictionary<NSUUID *, NSNumber *> *planeIds;
@@ -137,10 +138,10 @@ static int imageRotation(void) {
 
 // The smallest video format whose picture holds width x height (landscape), else the
 // largest there is.
-static ARVideoFormat *videoFormat(int width, int height) {
+static ARVideoFormat *videoFormat(NSArray<ARVideoFormat *> *formats, int width, int height) {
     ARVideoFormat *best = nil;
     ARVideoFormat *largest = nil;
-    for (ARVideoFormat *format in ARWorldTrackingConfiguration.supportedVideoFormats) {
+    for (ARVideoFormat *format in formats) {
         CGSize size = format.imageResolution;
         if (!largest || size.width * size.height > largest.imageResolution.width * largest.imageResolution.height) largest = format;
         if (size.width >= width && size.height >= height &&
@@ -151,9 +152,80 @@ static ARVideoFormat *videoFormat(int width, int height) {
 
 void ar_native_frame_release(void);
 
+// The front camera's face tracking, from the eskiu-lang/face package (face_install), so the
+// TrueDepth calls stay out of apps that do not use them (App Store guideline 2.5.1).
+typedef struct {
+    ARConfiguration *(*configuration)(int flags, int width, int height);
+    int (*count)(ARFrame *frame);
+    void (*face)(ARFrame *frame, int index, double *info);
+} EskiuArFaceProvider;
+static const EskiuArFaceProvider *faceProvider;
+
+void eskiu_ar_set_face_provider(const EskiuArFaceProvider *provider) {
+    faceProvider = provider;
+}
+
+// The image targets validated so far.
+static NSSet<ARReferenceImage *> *readyImages(void) {
+    NSMutableSet<ARReferenceImage *> *ready = [NSMutableSet new];
+    for (NSUInteger i = 0; i < targets.count; i++)
+        if (targetStates[i].intValue == 1 && [targets[i] isKindOfClass:ARReferenceImage.class]) [ready addObject:targets[i]];
+    return ready;
+}
+
+// Runs config: a new session starts from scratch; new options on a running one keep the world.
+static void runWith(ARConfiguration *config) {
+    ARSessionRunOptions options = running ? 0 : ARSessionRunOptionResetTracking | ARSessionRunOptionRemoveExistingAnchors;
+    if (!running) {
+        [planeIds removeAllObjects];
+        [anchorIds removeAllObjects];
+        [anchorsById removeAllObjects];
+        [imageIds removeAllObjects];
+    }
+    running = true;
+    [session runWithConfiguration:config options:options];
+}
+
 // Runs the session with the current flags, picture size and the image targets validated so
-// far. A session that runs already keeps its world.
-static void runConfiguration(void) {
+// far: the front camera with face tracking, body tracking, or world tracking. False (with
+// "unsupported" sent) when the device or the app cannot run what was asked.
+static bool runConfiguration(void) {
+    if (sessionFlags & 32768) {
+        ARConfiguration *config = faceProvider ? faceProvider->configuration(sessionFlags, sessionWidth, sessionHeight) : nil;
+        if (!config) {
+            emit("unsupported");
+            return false;
+        }
+        config.lightEstimationEnabled = (sessionFlags & (4 | 32)) != 0;
+        runWith(config);
+        return true;
+    }
+    if (sessionFlags & 65536) {
+        if (@available(iOS 13.0, *)) {
+            if (!ARBodyTrackingConfiguration.isSupported) {
+                emit("unsupported");
+                return false;
+            }
+            ARBodyTrackingConfiguration *config = [ARBodyTrackingConfiguration new];
+            ARPlaneDetection planes = ARPlaneDetectionNone;
+            if (sessionFlags & 1) planes |= ARPlaneDetectionHorizontal;
+            if (sessionFlags & 2) planes |= ARPlaneDetectionVertical;
+            config.planeDetection = planes;
+            config.lightEstimationEnabled = (sessionFlags & (4 | 32)) != 0;
+            if (@available(iOS 14.0, *)) config.automaticSkeletonScaleEstimationEnabled = YES;
+            ARVideoFormat *format = videoFormat(ARBodyTrackingConfiguration.supportedVideoFormats, sessionWidth, sessionHeight);
+            if (format) config.videoFormat = format;
+            if (sessionFlags & 64) {
+                NSSet<ARReferenceImage *> *ready = readyImages();
+                config.detectionImages = ready;
+                config.maximumNumberOfTrackedImages = MIN((NSInteger)trackedMax, (NSInteger)ready.count);
+            }
+            runWith(config);
+            return true;
+        }
+        emit("unsupported");
+        return false;
+    }
     ARWorldTrackingConfiguration *config = [ARWorldTrackingConfiguration new];
     ARPlaneDetection planes = ARPlaneDetectionNone;
     if (sessionFlags & 1) planes |= ARPlaneDetectionHorizontal;
@@ -173,12 +245,10 @@ static void runConfiguration(void) {
         }
     }
     config.frameSemantics = semantics;
-    ARVideoFormat *format = videoFormat(sessionWidth, sessionHeight);
+    ARVideoFormat *format = videoFormat(ARWorldTrackingConfiguration.supportedVideoFormats, sessionWidth, sessionHeight);
     if (format) config.videoFormat = format;
     if (sessionFlags & 64) {
-        NSMutableSet<ARReferenceImage *> *ready = [NSMutableSet new];
-        for (NSUInteger i = 0; i < targets.count; i++)
-            if (targetStates[i].intValue == 1 && [targets[i] isKindOfClass:ARReferenceImage.class]) [ready addObject:targets[i]];
+        NSSet<ARReferenceImage *> *ready = readyImages();
         config.detectionImages = ready;
         config.maximumNumberOfTrackedImages = MIN((NSInteger)trackedMax, (NSInteger)ready.count);
     }
@@ -188,16 +258,8 @@ static void runConfiguration(void) {
             if ([o isKindOfClass:ARReferenceObject.class]) [objects addObject:o];
         config.detectionObjects = objects;
     }
-    // A new session starts from scratch; new options on a running one keep the world.
-    ARSessionRunOptions options = running ? 0 : ARSessionRunOptionResetTracking | ARSessionRunOptionRemoveExistingAnchors;
-    if (!running) {
-        [planeIds removeAllObjects];
-        [anchorIds removeAllObjects];
-        [anchorsById removeAllObjects];
-        [imageIds removeAllObjects];
-    }
-    running = true;
-    [session runWithConfiguration:config options:options];
+    runWith(config);
+    return true;
 }
 
 // Bumped by each start and stop, so a start still queued when a stop comes does nothing.
@@ -215,7 +277,7 @@ void ar_native_session(int on, int flags, int width, int height) {
         os_unfair_lock_unlock(&frameLock);
         return;
     }
-    if (!ARWorldTrackingConfiguration.isSupported) {
+    if (!(flags & (32768 | 65536)) && !ARWorldTrackingConfiguration.isSupported) {
         emit("unsupported");
         return;
     }
@@ -240,8 +302,7 @@ void ar_native_session(int on, int flags, int width, int height) {
     int generation = startGeneration;
     dispatch_async(dispatch_get_main_queue(), ^{
         if (generation != startGeneration) return;
-        runConfiguration();
-        emit("running");
+        if (runConfiguration()) emit("running");
     });
 }
 
@@ -377,7 +438,14 @@ int ar_native_frame_acquire(int64_t *image, double *camera) {
     NSMutableArray<ARImageAnchor *> *images = [NSMutableArray new];
     NSMutableArray<ARObjectAnchor *> *objects = [NSMutableArray new];
     NSMutableArray *meshes = [NSMutableArray new];
+    NSMutableArray *bodies = [NSMutableArray new];
     for (ARAnchor *anchor in frame.anchors) {
+        if (@available(iOS 13.0, *)) {
+            if ([anchor isKindOfClass:ARBodyAnchor.class]) {
+                [bodies addObject:anchor];
+                continue;
+            }
+        }
         if (@available(iOS 13.4, *)) {
             if ([anchor isKindOfClass:ARMeshAnchor.class]) {
                 [meshes addObject:anchor];
@@ -394,6 +462,7 @@ int ar_native_frame_acquire(int64_t *image, double *camera) {
     lentImages = images;
     lentObjects = objects;
     lentMeshes = meshes;
+    lentBodies = bodies;
     return 1;
 }
 
@@ -417,11 +486,54 @@ void ar_native_frame_release(void) {
     lentImages = nil;
     lentObjects = nil;
     lentMeshes = nil;
+    lentBodies = nil;
 }
 
 int ar_native_plane_count(void) { return (int)lentPlanes.count; }
 
 int ar_native_mesh_count(void) { return (int)lentMeshes.count; }
+
+// Faces of the lent frame, read by the face package's provider (none without it).
+int ar_native_face_count(void) {
+    return lent && faceProvider ? faceProvider->count(lent) : 0;
+}
+
+void ar_native_face(int index, double *info) {
+    for (int i = 0; i < 160; i++) info[i] = 0;
+    if (lent && faceProvider) faceProvider->face(lent, index, info);
+}
+
+int ar_native_body_count(void) { return (int)lentBodies.count; }
+
+// A body of the lent frame: id, pose, joint count, the joints' model transforms where ARKit
+// keeps them (read in place while lent), estimated scale, tracking.
+void ar_native_body(int index, double *info) {
+    for (int i = 0; i < 21; i++) info[i] = 0;
+    if (index < 0 || index >= (int)lentBodies.count) return;
+    if (@available(iOS 13.0, *)) {
+        ARBodyAnchor *body = lentBodies[index];
+        info[0] = (double)planeId(body.identifier);
+        putMatrix(&info[1], body.transform);
+        info[17] = body.skeleton.definition.jointCount;
+        info[18] = (double)(intptr_t)body.skeleton.jointModelTransforms;
+        info[19] = 1.0;
+        if (@available(iOS 14.0, *)) info[19] = body.estimatedScaleFactor;
+        info[20] = body.isTracked ? 2 : 0;
+    }
+}
+
+// The name of joint j of ARKit's body skeleton and its parent (-1 for the root, -2 for no
+// such joint).
+int ar_native_body_joint(int joint, char *name, int capacity) {
+    if (capacity > 0) name[0] = 0;
+    if (@available(iOS 13.0, *)) {
+        ARSkeletonDefinition *d = ARSkeletonDefinition.defaultBody3DSkeletonDefinition;
+        if (joint < 0 || joint >= (int)d.jointCount) return -2;
+        if (capacity > 0) snprintf(name, capacity, "%s", d.jointNames[joint].UTF8String);
+        return d.parentIndices[joint].intValue;
+    }
+    return -2;
+}
 
 // A reconstruction mesh of the lent frame (LiDAR): id, pose, then the vertices, normals and
 // triangles where ARKit keeps them (shared Metal buffers, read in place while lent): pointer,
