@@ -7,6 +7,9 @@ All notable changes to this package are documented in this file. The format is b
 
 ### Added
 
+- Depth without LiDAR on iOS: `ArOptions.depth_model` runs a CoreML depth model (Depth
+  Anything V2 metric) on the picture; `ArDepth.estimated` tells its depth from a sensor's,
+  `ArOptions.depth_source` picks the sensor, the model, or the sensor where there is one.
 - `ArOptions.mesh`, `ArFrame.meshes` (`ArMesh`): the world's mesh from LiDAR scene
   reconstruction on iOS (ViroReact's world mesh), read in place from ARKit's buffers.
 - `ArFrame_depth_hit` and `AR_HIT_DEPTH`: hit tests against the depth image, with the

@@ -54,6 +54,26 @@ Result<int, string> draw(*ArFrame frame) {
 - **Occlusion.** `frame.depth` lines up with the picture as stored; sample it through
   `ArFrame_display_transform` to hide content behind real surfaces.
 
+## Depth without LiDAR
+
+On an iPhone without LiDAR, `ArOptions.depth_model` names a CoreML depth model (a compiled
+`.mlmodelc`, or an `.mlmodel` / `.mlpackage` compiled on first use) that turns the picture
+into metric depth, as ViroReact's monocular depth estimator does: Depth Anything V2 metric
+indoor (518 x 518, about 47 MB) is the one it was built against.
+
+```eskiu
+use_ar_session(ArOptions{depth: true, people: true, depth_model: "models/DepthAnythingV2_metric_indoor.mlmodelc"},
+               void(*ArFrame frame) { ... });
+```
+
+The model loads in the background when the session starts and runs on the newest picture
+whenever it is free (a few times a second), on its own queue at utility priority; each
+frame lends its latest result, put back in the sensor's orientation so it lines up with the
+picture as LiDAR depth does, with `frame.depth.estimated` set. People's depth goes over it
+with `people`. `depth_source` picks the sensor only (`ArDepthSourceSensor`) or the model
+even on a LiDAR device (`ArDepthSourceModel`, to compare the two). Android needs no model:
+ARCore's Depth API estimates depth from motion on most devices.
+
 ## A background shader of your own
 
 Without `<gpu/yuv>`, sample the picture's two textures (Y as `R8Unorm` of `width` x `height`,

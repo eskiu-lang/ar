@@ -77,6 +77,15 @@ enum ArDepthFormat { ArDepthMeters32, ArDepthMillimeters16 }
 What a depth image holds: 32-bit floats in meters (ARKit's LiDAR) or 16-bit unsigned
 millimeters (ARCore).
 
+### ArDepthSource
+
+```eskiu
+enum ArDepthSource { ArDepthSourceAuto, ArDepthSourceSensor, ArDepthSourceModel }
+```
+
+Where the depth image comes from: the device's sensor where it has one, else a depth
+model (ArOptions.depth_model); the sensor only; or the model even on a device with a sensor.
+
 ### AR_HIT_PLANES, AR_HIT_ESTIMATED
 
 ```eskiu
@@ -147,6 +156,8 @@ struct ArOptions {
     bool depth = false;
     bool people = false;
     bool mesh = false;
+    string depth_model;
+    int depth_source = ArDepthSourceAuto;
     bool points = false;
     int image_width = 1280;
     int image_height = 720;
@@ -159,7 +170,10 @@ struct ArOptions {
 What use_ar_session asks for: plane detection (horizontal, vertical), the light estimate
 (`light_hdr` asks ARCore for its environmental HDR estimate instead: main light and
 spherical harmonics; iOS ignores it), depth where the device has it (LiDAR on iOS, the
-Depth API on Android), the feature points, the size of the camera picture (a wish: the
+Depth API on Android) or from `depth_model` (iOS: a CoreML depth model, Depth Anything V2
+metric, run on the picture where there is no LiDAR, or always with `depth_source`), the
+people's depth over it (`people`, iOS), the reconstructed mesh of the surroundings
+(`mesh`, LiDAR), the feature points, the size of the camera picture (a wish: the
 platform gives the nearest it has, as the sensor sees it, landscape), and image targets:
 `image_count` pictures at `images` to find (frame.images), of which ARKit follows
 `tracked_images` as they move (the others keep the pose where they were last seen; ARCore
@@ -291,12 +305,13 @@ the platform's order and scale.
 ### ArDepth
 
 ```eskiu
-struct ArDepth { int width; int height; int format; int row_stride; *uint8 data; int64 size; }
+struct ArDepth { int width; int height; int format; int row_stride; *uint8 data; int64 size; bool estimated; }
 ```
 
 A depth image, aligned with the camera picture (as the sensor gives it, often smaller):
 size, format (ArDepthFormat), the bytes from one row to the next, and `data`, borrowed for
-the handler's call (null when there is no depth).
+the handler's call (null when there is no depth); `estimated` when a depth model made it
+from the picture (ArOptions.depth_model) instead of a sensor measuring it.
 
 ### ArHit
 
@@ -443,6 +458,16 @@ const int AR_FLAG_MESH = 256;
 
 Option flags for ar_native_session.
 
+### AR_FLAG_DEPTH_MODEL, AR_FLAG_DEPTH_MODEL_ONLY
+
+```eskiu
+const int AR_FLAG_DEPTH_MODEL = 512;
+const int AR_FLAG_DEPTH_MODEL_ONLY = 1024;
+```
+
+A depth model may fill in the depth (ArOptions.depth_model), and it is used even where a
+sensor measures depth.
+
 ### AR_MESH_INFO, AR_FLAG_POINTS, AR_FLAG_LIGHT_HDR, AR_FLAG_IMAGES
 
 ```eskiu
@@ -511,10 +536,10 @@ A hit: distance, kind, plane id, the pose's 16 values.
 ### AR_DEPTH_INFO
 
 ```eskiu
-const int AR_DEPTH_INFO = 6;
+const int AR_DEPTH_INFO = 7;
 ```
 
-Depth: width, height, format, row_stride, data pointer, size.
+Depth: width, height, format, row_stride, data pointer, size, estimated.
 
 ### AR_TRACKED_IMAGE_INFO
 
@@ -643,6 +668,23 @@ string ar_image_path(string path, *bool owned)
 A target's file as a path the platform opens: an absolute path or (on the web) a URL as it
 is, else the app's asset of that name (ui_asset_path), else the path as given. The caller
 frees the result when `owned` comes back true.
+
+### ar_send_depth_model
+
+```eskiu
+void ar_send_depth_model(ArOptions options)
+```
+
+Sends the depth model's path to the platform (resolved as an image target's path) when the
+options use one.
+
+### ar_same_path
+
+```eskiu
+bool ar_same_path(string a, string b)
+```
+
+True when a and b name the same file (both null or empty, or equal).
 
 ### ar_send_images
 

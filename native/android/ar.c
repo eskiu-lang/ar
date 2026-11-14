@@ -813,6 +813,8 @@ void ar_native_frame_release(void) {
 static Snapshot *lentSnapshot(void) { return lent >= 0 ? &snapshots[lent] : NULL; }
 
 // ARCore has no reconstruction mesh (its depth is in ar_native_depth).
+// ARCore's Depth API gives depth without a sensor, so no depth model runs here.
+void ar_native_depth_model(const char *path) { (void)path; }
 int ar_native_mesh_count(void) { return 0; }
 void ar_native_mesh(int index, double *info) { (void)index; for (int i = 0; i < 25; i++) info[i] = 0; }
 

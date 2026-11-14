@@ -46,6 +46,10 @@ enum ArAlignment { ArHorizontalUp, ArHorizontalDown, ArVertical }
 // millimeters (ARCore).
 enum ArDepthFormat { ArDepthMeters32, ArDepthMillimeters16 }
 
+// Where the depth image comes from: the device's sensor where it has one, else a depth
+// model (ArOptions.depth_model); the sensor only; or the model even on a device with a sensor.
+enum ArDepthSource { ArDepthSourceAuto, ArDepthSourceSensor, ArDepthSourceModel }
+
 // Hit-test targets, combined with |: planes found so far (inside their outline), and
 // estimates (ARKit's estimated planes, ARCore's feature and depth points).
 const int AR_HIT_PLANES = 1;
@@ -82,7 +86,10 @@ struct ArImageTarget {
 // What use_ar_session asks for: plane detection (horizontal, vertical), the light estimate
 // (`light_hdr` asks ARCore for its environmental HDR estimate instead: main light and
 // spherical harmonics; iOS ignores it), depth where the device has it (LiDAR on iOS, the
-// Depth API on Android), the feature points, the size of the camera picture (a wish: the
+// Depth API on Android) or from `depth_model` (iOS: a CoreML depth model, Depth Anything V2
+// metric, run on the picture where there is no LiDAR, or always with `depth_source`), the
+// people's depth over it (`people`, iOS), the reconstructed mesh of the surroundings
+// (`mesh`, LiDAR), the feature points, the size of the camera picture (a wish: the
 // platform gives the nearest it has, as the sensor sees it, landscape), and image targets:
 // `image_count` pictures at `images` to find (frame.images), of which ARKit follows
 // `tracked_images` as they move (the others keep the pose where they were last seen; ARCore
@@ -95,6 +102,8 @@ struct ArOptions {
     bool depth = false;
     bool people = false;
     bool mesh = false;
+    string depth_model;
+    int depth_source = ArDepthSourceAuto;
     bool points = false;
     int image_width = 1280;
     int image_height = 720;
@@ -188,8 +197,9 @@ struct ArLight {
 
 // A depth image, aligned with the camera picture (as the sensor gives it, often smaller):
 // size, format (ArDepthFormat), the bytes from one row to the next, and `data`, borrowed for
-// the handler's call (null when there is no depth).
-struct ArDepth { int width; int height; int format; int row_stride; *uint8 data; int64 size; }
+// the handler's call (null when there is no depth); `estimated` when a depth model made it
+// from the picture (ArOptions.depth_model) instead of a sensor measuring it.
+struct ArDepth { int width; int height; int format; int row_stride; *uint8 data; int64 size; bool estimated; }
 
 // One hit-test result: the distance from the camera, the kind (AR_HIT_PLANE or
 // AR_HIT_ESTIMATE), the plane hit (0 for an estimate) and the pose of the hit (y along the
@@ -311,6 +321,7 @@ extern void ar_native_anchor(int index, *double info);
 extern int ar_native_points(*float out, int max_points);
 extern int ar_native_light(*double info);
 extern int ar_native_depth(*int64 info);
+extern void ar_native_depth_model(string path);
 extern int ar_native_hit_test(*float ray, int targets, *double out, int max_hits);
 extern double ar_native_anchor_add(*float pose, double plane);
 extern void ar_native_anchor_remove(double id);
@@ -327,6 +338,10 @@ const int AR_FLAG_LIGHT = 4;
 const int AR_FLAG_DEPTH = 8;
 const int AR_FLAG_PEOPLE = 128;
 const int AR_FLAG_MESH = 256;
+// A depth model may fill in the depth (ArOptions.depth_model), and it is used even where a
+// sensor measures depth.
+const int AR_FLAG_DEPTH_MODEL = 512;
+const int AR_FLAG_DEPTH_MODEL_ONLY = 1024;
 // Values ar_native_mesh fills.
 const int AR_MESH_INFO = 25;
 const int AR_FLAG_POINTS = 16;
@@ -357,8 +372,8 @@ const int AR_LIGHT_INFO = 42;
 // A hit: distance, kind, plane id, the pose's 16 values.
 const int AR_HIT_INFO = 19;
 
-// Depth: width, height, format, row_stride, data pointer, size.
-const int AR_DEPTH_INFO = 6;
+// Depth: width, height, format, row_stride, data pointer, size, estimated.
+const int AR_DEPTH_INFO = 7;
 
 // A tracked image: id, target index, tracking, method, the pose's 16 values, extent x and z.
 const int AR_TRACKED_IMAGE_INFO = 22;
@@ -382,6 +397,10 @@ int ar_flags(ArOptions options) {
     if (options.depth) { flags |= AR_FLAG_DEPTH; }
     if (options.people) { flags |= AR_FLAG_PEOPLE; }
     if (options.mesh) { flags |= AR_FLAG_MESH; }
+    if (options.depth && options.depth_model != null && options.depth_model[0] != 0 && options.depth_source != ArDepthSourceSensor) {
+        flags |= AR_FLAG_DEPTH_MODEL;
+        if (options.depth_source == ArDepthSourceModel) { flags |= AR_FLAG_DEPTH_MODEL_ONLY; }
+    }
     if (options.points) { flags |= AR_FLAG_POINTS; }
     if (options.light_hdr) { flags |= AR_FLAG_LIGHT_HDR; }
     if (options.images != null && options.image_count > 0) { flags |= AR_FLAG_IMAGES; }
@@ -672,6 +691,24 @@ string ar_image_path(string path, *bool owned) {
     return found;
 }
 
+// Sends the depth model's path to the platform (resolved as an image target's path) when the
+// options use one.
+void ar_send_depth_model(ArOptions options) {
+    if ((ar_flags(options) & AR_FLAG_DEPTH_MODEL) == 0) { return; }
+    bool owned;
+    string path = ar_image_path(options.depth_model, &owned);
+    ar_native_depth_model(path);
+    if (owned) { free((*void)path); }
+}
+
+// True when a and b name the same file (both null or empty, or equal).
+bool ar_same_path(string a, string b) {
+    bool ae = a == null || a[0] == 0;
+    bool be = b == null || b[0] == 0;
+    if (ae || be) { return ae && be; }
+    return strcmp(a, b) == 0;
+}
+
 // Sends the targets to the platform (ar_native_images, then one ar_native_image_add each,
 // up to AR_MAX_IMAGES) and keeps their names. A target with neither valid pixels nor a path,
 // or no physical width, is refused here and reaches the platform empty.
@@ -767,7 +804,8 @@ void ar_depth_read(*int64 info, *ArDepth out) {
     if (format != ArDepthMeters32 && format != ArDepthMillimeters16) { return; }
     int64 texel = format == ArDepthMeters32 ? 4 : 2;
     if (row < width * texel || size < (height - 1) * row + width * texel) { return; }
-    *out = ArDepth{width: (int)width, height: (int)height, format: (int)format, row_stride: (int)row, data: data, size: size};
+    *out = ArDepth{width: (int)width, height: (int)height, format: (int)format, row_stride: (int)row, data: data, size: size,
+                   estimated: info[6] != 0};
 }
 
 // The depth at pixel (x, y) of the depth image in meters; 0 outside it or where unknown.
@@ -948,7 +986,9 @@ void use_ar_session(ArOptions options, escaping fn(*ArFrame)->void on_frame) {
     int64 images = ar_images_key(options.images, options.image_count);
     bool new_images = images != held.images_key || options.tracked_images != held.options.tracked_images;
     if (held.asked && (flags != ar_flags(held.options) || held.options.image_width != options.image_width ||
-                       held.options.image_height != options.image_height || new_images)) {
+                       held.options.image_height != options.image_height || new_images ||
+                       !ar_same_path(held.options.depth_model, options.depth_model))) {
+        ar_send_depth_model(options);
         if (new_images) { ar_send_images(options.images, options.image_count, options.tracked_images); }
         ar_session_flags = flags;
         ar_native_session(1, flags, options.image_width, options.image_height);
@@ -962,6 +1002,7 @@ void use_ar_session(ArOptions options, escaping fn(*ArFrame)->void on_frame) {
         ar_session_users++;
         held.asked = true;
         ar_session_flags = ar_flags(held.options);
+        ar_send_depth_model(held.options);
         ar_native_session(1, ar_session_flags, held.options.image_width, held.options.image_height);
     }, void() {
         ar_session_users--;

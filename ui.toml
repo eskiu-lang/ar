@@ -2,7 +2,7 @@
 # so it can say in its own words why it uses the camera, and an app that needs AR to work at
 # all can make ARCore "required" (docs/README.md).
 [ios]
-frameworks = ["ARKit", "CoreVideo"]
+frameworks = ["ARKit", "CoreVideo", "CoreML", "Vision"]
 
 [ios.plist]
 NSCameraUsageDescription = "Shows the world around you in augmented reality"
