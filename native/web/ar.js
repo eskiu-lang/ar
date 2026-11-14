@@ -141,6 +141,11 @@ mergeInto(LibraryManager.library, {
   ar_native_object_add: function(index, path) { return 0; },
   ar_native_tracked_object_count: function() { return 0; },
   ar_native_tracked_object: function(index, info) {},
+  ar_native_face_count: function() { return 0; },
+  ar_native_face: function(index, info) { for (let i = 0; i < 160; i++) HEAPF64[(info >> 3) + i] = 0; },
+  ar_native_body_count: function() { return 0; },
+  ar_native_body: function(index, info) { for (let i = 0; i < 21; i++) HEAPF64[(info >> 3) + i] = 0; },
+  ar_native_body_joint: function(joint, name, capacity) { if (capacity > 0) HEAPU8[name] = 0; return -2; },
   ar_native_mesh_count: function() { return 0; },
   ar_native_mesh: function(index, info) { for (let i = 0; i < 25; i++) HEAPF64[(info >> 3) + i] = 0; },
   ar_native_tracked_image_count: function() {

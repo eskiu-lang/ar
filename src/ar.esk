@@ -98,6 +98,12 @@ struct ArImageTarget {
 // `image_count` pictures at `images` to find (frame.images), of which ARKit follows
 // `tracked_images` as they move (the others keep the pose where they were last seen; ARCore
 // follows every one). The targets are copied when they change: a new array, count or field.
+// `front_camera` runs the session on the front camera with face tracking (frame.faces;
+// ViroReact's frontCameraEnabled): on iOS it needs the eskiu-lang/face package, which holds
+// the TrueDepth calls so an app without it passes App Store review guideline 2.5.1, and the
+// session reports "unsupported" without it; on Android it is ARCore's Augmented Faces.
+// `body` tracks people's bodies on the rear camera (frame.bodies, ARKit's body tracking;
+// iOS on A12 or later).
 struct ArOptions {
     bool horizontal = true;
     bool vertical = false;
@@ -113,6 +119,8 @@ struct ArOptions {
     bool semantics = false;
     *ArObjectTarget objects;
     int object_count;
+    bool front_camera = false;
+    bool body = false;
     bool points = false;
     int image_width = 1280;
     int image_height = 720;
@@ -347,6 +355,122 @@ int ArMesh_index(*ArMesh self, int k) {
     return (int)((*uint32)self.faces)[k];
 }
 
+// ARKit's 52 blend shapes, in the order of ArFace.blend_shapes (ARFaceAnchor's
+// blendShapes by name, alphabetical as ARKit's documentation lists them).
+const int ArBlendBrowDownLeft = 0;
+const int ArBlendBrowDownRight = 1;
+const int ArBlendBrowInnerUp = 2;
+const int ArBlendBrowOuterUpLeft = 3;
+const int ArBlendBrowOuterUpRight = 4;
+const int ArBlendCheekPuff = 5;
+const int ArBlendCheekSquintLeft = 6;
+const int ArBlendCheekSquintRight = 7;
+const int ArBlendEyeBlinkLeft = 8;
+const int ArBlendEyeBlinkRight = 9;
+const int ArBlendEyeLookDownLeft = 10;
+const int ArBlendEyeLookDownRight = 11;
+const int ArBlendEyeLookInLeft = 12;
+const int ArBlendEyeLookInRight = 13;
+const int ArBlendEyeLookOutLeft = 14;
+const int ArBlendEyeLookOutRight = 15;
+const int ArBlendEyeLookUpLeft = 16;
+const int ArBlendEyeLookUpRight = 17;
+const int ArBlendEyeSquintLeft = 18;
+const int ArBlendEyeSquintRight = 19;
+const int ArBlendEyeWideLeft = 20;
+const int ArBlendEyeWideRight = 21;
+const int ArBlendJawForward = 22;
+const int ArBlendJawLeft = 23;
+const int ArBlendJawOpen = 24;
+const int ArBlendJawRight = 25;
+const int ArBlendMouthClose = 26;
+const int ArBlendMouthDimpleLeft = 27;
+const int ArBlendMouthDimpleRight = 28;
+const int ArBlendMouthFrownLeft = 29;
+const int ArBlendMouthFrownRight = 30;
+const int ArBlendMouthFunnel = 31;
+const int ArBlendMouthLeft = 32;
+const int ArBlendMouthLowerDownLeft = 33;
+const int ArBlendMouthLowerDownRight = 34;
+const int ArBlendMouthPressLeft = 35;
+const int ArBlendMouthPressRight = 36;
+const int ArBlendMouthPucker = 37;
+const int ArBlendMouthRight = 38;
+const int ArBlendMouthRollLower = 39;
+const int ArBlendMouthRollUpper = 40;
+const int ArBlendMouthShrugLower = 41;
+const int ArBlendMouthShrugUpper = 42;
+const int ArBlendMouthSmileLeft = 43;
+const int ArBlendMouthSmileRight = 44;
+const int ArBlendMouthStretchLeft = 45;
+const int ArBlendMouthStretchRight = 46;
+const int ArBlendMouthUpperUpLeft = 47;
+const int ArBlendMouthUpperUpRight = 48;
+const int ArBlendNoseSneerLeft = 49;
+const int ArBlendNoseSneerRight = 50;
+const int ArBlendTongueOut = 51;
+
+// A face the front camera tracks (ArOptions.front_camera): an id that stays while it is
+// tracked, its pose (the head's center, +Z out of the face, +Y up), and its mesh in the
+// pose's space, borrowed for the handler's call: `vertex_count` positions (3 floats each),
+// as many texture coordinates (2 floats each, null when the platform has none) and
+// `triangle_count` triangles (`index_bytes` 2 or 4 each). The topology is fixed per
+// platform (ARKit's 1220 vertices, ARCore's 468), so an index list made once stays valid.
+// iOS adds `blend_shape_count` (52) expression weights from 0 to 1 (ArBlend*), the eyes'
+// poses and the point they look at, in the face's space; Android adds the poses of the nose
+// tip and the two forehead regions, in world space, as ARCore's Augmented Faces gives them.
+struct ArFace {
+    int64 id;
+    ArMat4 pose;
+    *float vertices;
+    int vertex_count;
+    *float uvs;
+    *uint8 indices;
+    int triangle_count;
+    int index_bytes;
+    float[52] blend_shapes;
+    int blend_shape_count;
+    ArMat4 left_eye;
+    ArMat4 right_eye;
+    ArVec3 look_at;
+    ArMat4 nose_tip;
+    ArMat4 forehead_left;
+    ArMat4 forehead_right;
+    int tracking;
+}
+
+// Vertex i of a face's mesh, in its pose's space.
+ArVec3 ArFace_vertex(*ArFace self, int i) {
+    return ArVec3{self.vertices[i * 3], self.vertices[i * 3 + 1], self.vertices[i * 3 + 2]};
+}
+
+// Index k (0 to 3 * triangle_count) of a face's triangles.
+int ArFace_index(*ArFace self, int k) {
+    if (self.index_bytes == 2) return (int)((*uint16)self.indices)[k];
+    return (int)((*uint32)self.indices)[k];
+}
+
+// A body on the rear camera (ArOptions.body, ARKit): an id, its pose (the hips, on the
+// ground plane's up axis), `joint_count` joints (ARKit's 91), each a 4x4 column-major
+// transform relative to the pose, borrowed for the handler's call, and the scale ARKit
+// estimates for the person against its default skeleton. ar_body_joint names a joint and
+// gives its parent.
+struct ArBody {
+    int64 id;
+    ArMat4 pose;
+    int joint_count;
+    *float joints;
+    float scale;
+    int tracking;
+}
+
+// Joint j's transform relative to the body's pose.
+ArMat4 ArBody_joint(*ArBody self, int j) {
+    ArMat4 m;
+    for (k in 0..16) m.m[k] = self.joints[j * 16 + k];
+    return m;
+}
+
 // A frame of the session, borrowed for the handler's call. `image` is the camera picture.
 // `camera` is the camera's pose (camera to world, axes along the picture as the sensor gives
 // it), `intrinsics` the picture's, `tracking` and `reason` how well it is tracked. Planes,
@@ -379,6 +503,10 @@ struct ArFrame {
     ArSemantics semantics;
     *ArTrackedObject objects;
     int object_count;
+    *ArFace faces;
+    int face_count;
+    *ArBody bodies;
+    int body_count;
 }
 
 // The platform's side (native/ios, native/android, native/web). ar_native_session starts the
@@ -418,6 +546,11 @@ extern void ar_native_objects(int count);
 extern int ar_native_object_add(int index, string path);
 extern int ar_native_tracked_object_count();
 extern void ar_native_tracked_object(int index, *double info);
+extern int ar_native_face_count();
+extern void ar_native_face(int index, *double info);
+extern int ar_native_body_count();
+extern void ar_native_body(int index, *double info);
+extern int ar_native_body_joint(int joint, *char name, int capacity);
 extern int ar_native_hit_test(*float ray, int targets, *double out, int max_hits);
 extern double ar_native_anchor_add(*float pose, double plane);
 extern void ar_native_anchor_remove(double id);
@@ -445,6 +578,18 @@ const int AR_FLAG_GEO = 4096;
 const int AR_FLAG_SEMANTICS = 8192;
 // Real objects to find (ARKit's reference objects).
 const int AR_FLAG_OBJECTS = 16384;
+// The front camera with face tracking, and body tracking.
+const int AR_FLAG_FRONT = 32768;
+const int AR_FLAG_BODY = 65536;
+
+// Values ar_native_face fills: id, the pose's 16 values, the mesh (vertex pointer, vertex
+// count, texture coordinate pointer, index pointer, triangle count, index bytes), 52 blend
+// shape weights and how many, the eyes' poses (16 each), the look-at point (3), the nose
+// tip's and the two forehead regions' poses (16 each), tracking.
+const int AR_FACE_INFO = 160;
+// Values ar_native_body fills: id, the pose's 16 values, joint count, the joints' pointer,
+// estimated scale, tracking.
+const int AR_BODY_INFO = 21;
 
 // A tracked object: id, target index, the pose's 16 values, center and extent (3 each).
 const int AR_OBJECT_INFO = 24;
@@ -511,6 +656,8 @@ int ar_flags(ArOptions options) {
     if (options.geospatial) { flags |= AR_FLAG_GEO; }
     if (options.semantics) { flags |= AR_FLAG_SEMANTICS; }
     if (options.objects != null && options.object_count > 0) { flags |= AR_FLAG_OBJECTS; }
+    if (options.front_camera) { flags |= AR_FLAG_FRONT; }
+    if (options.body) { flags |= AR_FLAG_BODY; }
     if (options.points) { flags |= AR_FLAG_POINTS; }
     if (options.light_hdr) { flags |= AR_FLAG_LIGHT_HDR; }
     if (options.images != null && options.image_count > 0) { flags |= AR_FLAG_IMAGES; }
@@ -624,6 +771,8 @@ List<ArAnchor> _ar_anchors;
 List<ArPoint> _ar_points;
 List<ArTrackedImage> _ar_tracked;
 List<ArMesh> _ar_meshes;
+List<ArFace> _ar_faces;
+List<ArBody> _ar_bodies;
 
 // The image targets the session has, as ar_send_images last sent them: each one's name
 // (copied), whether it was refused before reaching the platform, and what was sent, by
@@ -677,6 +826,8 @@ void ar_frame_fill(*ArFrame frame, int flags) {
     _ar_points.clear();
     _ar_tracked.clear();
     _ar_meshes.clear();
+    _ar_faces.clear();
+    _ar_bodies.clear();
     double[AR_LIGHT_INFO] values;
     if ((flags & (AR_FLAG_HORIZONTAL | AR_FLAG_VERTICAL)) != 0) {
         int count = ar_native_plane_count();
@@ -761,6 +912,32 @@ void ar_frame_fill(*ArFrame frame, int flags) {
     }
     frame.meshes = _ar_meshes.size > 0 ? &_ar_meshes.data[0] : null;
     frame.mesh_count = (int)_ar_meshes.size;
+    if ((flags & AR_FLAG_FRONT) != 0) {
+        double[AR_FACE_INFO] fv;
+        int count = ar_native_face_count();
+        for (i in 0..count) {
+            ar_native_face(i, &fv[0]);
+            ArFace f;
+            if (ar_face_read(&fv[0], &f)) _ar_faces.push(f);
+        }
+    }
+    frame.faces = _ar_faces.size > 0 ? &_ar_faces.data[0] : null;
+    frame.face_count = (int)_ar_faces.size;
+    if ((flags & AR_FLAG_BODY) != 0) {
+        double[AR_BODY_INFO] bv;
+        int count = ar_native_body_count();
+        for (i in 0..count) {
+            ar_native_body(i, &bv[0]);
+            ArBody b = ArBody{id: (int64)bv[0], joint_count: (int)bv[17], scale: (float)bv[19], tracking: (int)bv[20]};
+            b.pose = ar_mat4_from(&bv[1]);
+            b.joints = (*float)(int64)bv[18];
+            if (b.joints == null || b.joint_count <= 0 || b.joint_count > 256 || !ar_mat4_finite(b.pose)) { continue; }
+            if (b.tracking < ArTrackingNone || b.tracking > ArTrackingNormal) { b.tracking = ArTrackingNone; }
+            _ar_bodies.push(b);
+        }
+    }
+    frame.bodies = _ar_bodies.size > 0 ? &_ar_bodies.data[0] : null;
+    frame.body_count = (int)_ar_bodies.size;
     frame.planes = _ar_planes.size > 0 ? &_ar_planes.data[0] : null;
     frame.plane_count = (int)_ar_planes.size;
     frame.anchors = _ar_anchors.size > 0 ? &_ar_anchors.data[0] : null;
@@ -774,6 +951,44 @@ void ar_frame_fill(*ArFrame frame, int flags) {
     if ((flags & AR_FLAG_GEO) != 0 && ar_native_earth(&earth[0]) != 0) { frame.has_earth = ar_earth_read(&earth[0], &frame.earth); }
     int64[4] sem;
     if ((flags & AR_FLAG_SEMANTICS) != 0 && ar_native_semantics(&sem[0]) != 0) { ar_semantics_read(&sem[0], &frame.semantics); }
+}
+
+// The face values the native side filled, checked; false for a face without a whole mesh
+// or with a pose that is not a number. Weights are clamped to 0..1.
+bool ar_face_read(*double info, *ArFace out) {
+    *out = ArFace{id: (int64)info[0], vertex_count: (int)info[18], triangle_count: (int)info[21], index_bytes: (int)info[22],
+                  blend_shape_count: (int)info[75], tracking: (int)info[159]};
+    out.pose = ar_mat4_from(&info[1]);
+    out.vertices = (*float)(int64)info[17];
+    out.uvs = (*float)(int64)info[19];
+    out.indices = (*uint8)(int64)info[20];
+    if (out.vertices == null || out.indices == null || out.vertex_count <= 0 || out.triangle_count <= 0
+        || (out.index_bytes != 2 && out.index_bytes != 4) || !ar_mat4_finite(out.pose)) { return false; }
+    if (out.blend_shape_count < 0 || out.blend_shape_count > 52) { out.blend_shape_count = 0; }
+    for (k in 0..out.blend_shape_count) {
+        double w = info[23 + k];
+        out.blend_shapes[k] = w != w || w < 0.0 ? 0.0 : w > 1.0 ? 1.0 : (float)w;
+    }
+    out.left_eye = ar_mat4_from(&info[76]);
+    out.right_eye = ar_mat4_from(&info[92]);
+    out.look_at = ArVec3{(float)info[108], (float)info[109], (float)info[110]};
+    out.nose_tip = ar_mat4_from(&info[111]);
+    out.forehead_left = ar_mat4_from(&info[127]);
+    out.forehead_right = ar_mat4_from(&info[143]);
+    if (out.tracking < ArTrackingNone || out.tracking > ArTrackingNormal) { out.tracking = ArTrackingNone; }
+    return true;
+}
+
+// The name of body joint j (ARKit's, as "left_hand_joint") into name and its parent's index,
+// -1 for the root; -2 when there is no such joint (or no body tracking on the platform).
+int ar_body_joint(int joint, *String name) {
+    char[128] buf;
+    buf[0] = 0;
+    int parent = ar_native_body_joint(joint, &buf[0], 128);
+    buf[127] = 0;
+    name.clear();
+    if (parent >= -1) { name.append((string)&buf[0]); }
+    return parent;
 }
 
 // The semantics values the native side filled, checked; left empty when they do not describe
