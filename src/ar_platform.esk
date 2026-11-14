@@ -1,0 +1,504 @@
+// ar_platform.esk: the platform's side and reading what it reports into frames (part of ar.esk, which imports it in order after the ones before it)
+
+// The platform's side (native/ios, native/android, native/web). ar_native_session starts the
+// session (`on` 1, with the option flags and the picture size wished for) or stops it;
+// ar_native_images starts a new set of image targets (sent before the session call that uses
+// them) and ar_native_image_add gives one, as tight 8-bit gray pixels or a file path, which
+// the native side copies; ar_native_image_state says where one stands (an ArImageState).
+// Status messages come on the "ar" channel ("running", "unsupported", "denied",
+// "installing", "failed", "paused"), and "frame" on the "ar_frame" channel when a frame is
+// waiting and none was posted since the last acquire. ar_native_frame_acquire lends the
+// newest frame: it fills AR_IMAGE_INFO int64 values (ui-camera's frame layout) and
+// AR_CAMERA_INFO doubles and returns 1, or 0 when there is none. While it is lent, the
+// other calls read it; ar_native_frame_release ends the loan. Ids cross as doubles (exact to
+// 2^53), so the web's JavaScript sees plain numbers.
+extern void ar_native_session(int on, int flags, int width, int height);
+extern int ar_native_frame_acquire(*int64 image, *double camera);
+extern void ar_native_frame_release();
+extern int ar_native_plane_count();
+extern int ar_native_mesh_count();
+extern void ar_native_mesh(int index, *double info);
+extern int ar_native_plane(int index, *double info, *float polygon, int max_points);
+extern int ar_native_anchor_count();
+extern void ar_native_anchor(int index, *double info);
+extern int ar_native_points(*float out, int max_points);
+extern int ar_native_light(*double info);
+extern int ar_native_depth(*int64 info);
+extern void ar_native_depth_model(string path);
+extern double ar_native_cloud_host(double anchor, int ttl_days);
+extern double ar_native_cloud_resolve(string cloud_id);
+extern double ar_native_earth_anchor(double lat, double lng, double alt, *float quaternion);
+extern double ar_native_earth_resolve(int rooftop, double lat, double lng, double alt, *float quaternion);
+extern int ar_native_job(double job, *double info, *char text, int capacity);
+extern int ar_native_earth(*double info);
+extern int ar_native_semantics(*int64 info);
+extern double ar_native_vps_check(double lat, double lng);
+extern void ar_native_objects(int count);
+extern int ar_native_object_add(int index, string path);
+extern int ar_native_tracked_object_count();
+extern void ar_native_tracked_object(int index, *double info);
+extern int ar_native_face_count();
+extern void ar_native_face(int index, *double info);
+extern int ar_native_body_count();
+extern void ar_native_body(int index, *double info);
+extern int ar_native_body_joint(int joint, *char name, int capacity);
+extern int ar_native_hit_test(*float ray, int targets, *double out, int max_hits);
+extern double ar_native_anchor_add(*float pose, double plane);
+extern void ar_native_anchor_remove(double id);
+extern void ar_native_images(int count, int tracked);
+extern void ar_native_image_add(int index, *uint8 gray, int width, int height, string path, double physical_width);
+extern int ar_native_image_state(int index);
+extern int ar_native_tracked_image_count();
+extern void ar_native_tracked_image(int index, *double info);
+
+// Option flags for ar_native_session.
+const int AR_FLAG_HORIZONTAL = 1;
+const int AR_FLAG_VERTICAL = 2;
+const int AR_FLAG_LIGHT = 4;
+const int AR_FLAG_DEPTH = 8;
+const int AR_FLAG_PEOPLE = 128;
+const int AR_FLAG_MESH = 256;
+// A depth model may fill in the depth (ArOptions.depth_model), and it is used even where a
+// sensor measures depth.
+const int AR_FLAG_DEPTH_MODEL = 512;
+const int AR_FLAG_DEPTH_MODEL_ONLY = 1024;
+// ARCore's cloud anchors and Earth (Android).
+const int AR_FLAG_CLOUD = 2048;
+const int AR_FLAG_GEO = 4096;
+// ARCore's scene semantics (Android).
+const int AR_FLAG_SEMANTICS = 8192;
+// Real objects to find (ARKit's reference objects).
+const int AR_FLAG_OBJECTS = 16384;
+// The front camera with face tracking, and body tracking.
+const int AR_FLAG_FRONT = 32768;
+const int AR_FLAG_BODY = 65536;
+
+// Values ar_native_face fills: id, the pose's 16 values, the mesh (vertex pointer, vertex
+// count, texture coordinate pointer, index pointer, triangle count, index bytes), 52 blend
+// shape weights and how many, the eyes' poses (16 each), the look-at point (3), the nose
+// tip's and the two forehead regions' poses (16 each), tracking.
+const int AR_FACE_INFO = 160;
+// Values ar_native_body fills: id, the pose's 16 values, joint count, the joints' pointer,
+// estimated scale, tracking.
+const int AR_BODY_INFO = 21;
+
+// A tracked object: id, target index, the pose's 16 values, center and extent (3 each).
+const int AR_OBJECT_INFO = 24;
+// Values ar_native_mesh fills.
+const int AR_MESH_INFO = 25;
+const int AR_FLAG_POINTS = 16;
+const int AR_FLAG_LIGHT_HDR = 32;
+const int AR_FLAG_IMAGES = 64;
+
+// How many values the native side fills. The image: width, height, format, plane_count,
+// rotation, front, matrix, full_range, timestamp_ns, then for each of 3 planes its data
+// pointer, row_stride, pixel_stride and size.
+const int AR_IMAGE_INFO = 24;
+
+// The camera: tracking (an ArTracking), reason (an ArReason), the pose's 16 values, fx, fy,
+// cx, cy, and the intrinsics' image width and height.
+const int AR_CAMERA_INFO = 24;
+
+// A plane: id, alignment, tracking, the center pose's 16 values, extent x and z, subsumed
+// by.
+const int AR_PLANE_INFO = 23;
+
+// An anchor: id, tracking, the pose's 16 values.
+const int AR_ANCHOR_INFO = 18;
+
+// The light: valid, intensity, temperature, color r g b, has_main, direction x y z,
+// intensity r g b, has_harmonics, 27 harmonics coefficients, then the source (an
+// ArLightSource). Intensity and color are the platform's own (ar_light_read scales them).
+const int AR_LIGHT_INFO = 42;
+
+// A hit: distance, kind, plane id, the pose's 16 values.
+const int AR_HIT_INFO = 19;
+
+// Depth: width, height, format, row_stride, data pointer, size, estimated.
+const int AR_DEPTH_INFO = 7;
+
+// A tracked image: id, target index, tracking, method, the pose's 16 values, extent x and z.
+const int AR_TRACKED_IMAGE_INFO = 22;
+
+// The most plane outline points, planes, feature points and hits read from one frame.
+const int AR_MAX_POLYGON = 256;
+const int AR_MAX_PLANES = 64;
+const int AR_MAX_POINTS = 4096;
+const int AR_MAX_HITS = 16;
+
+// The most image targets a session takes (ARKit suggests up to 100 for detection; ARCore's
+// database holds up to 1000) and the most read from one frame.
+const int AR_MAX_IMAGES = 100;
+
+// The flags for ar_native_session from the options.
+int ar_flags(ArOptions options) {
+    int flags = 0;
+    if (options.horizontal) { flags |= AR_FLAG_HORIZONTAL; }
+    if (options.vertical) { flags |= AR_FLAG_VERTICAL; }
+    if (options.light) { flags |= AR_FLAG_LIGHT; }
+    if (options.depth) { flags |= AR_FLAG_DEPTH; }
+    if (options.people) { flags |= AR_FLAG_PEOPLE; }
+    if (options.mesh) { flags |= AR_FLAG_MESH; }
+    if (options.depth && options.depth_model != null && options.depth_model[0] != 0 && options.depth_source != ArDepthSourceSensor) {
+        flags |= AR_FLAG_DEPTH_MODEL;
+        if (options.depth_source == ArDepthSourceModel) { flags |= AR_FLAG_DEPTH_MODEL_ONLY; }
+    }
+    if (options.cloud_anchors) { flags |= AR_FLAG_CLOUD; }
+    if (options.geospatial) { flags |= AR_FLAG_GEO; }
+    if (options.semantics) { flags |= AR_FLAG_SEMANTICS; }
+    if (options.objects != null && options.object_count > 0) { flags |= AR_FLAG_OBJECTS; }
+    if (options.front_camera) { flags |= AR_FLAG_FRONT; }
+    if (options.body) { flags |= AR_FLAG_BODY; }
+    if (options.points) { flags |= AR_FLAG_POINTS; }
+    if (options.light_hdr) { flags |= AR_FLAG_LIGHT_HDR; }
+    if (options.images != null && options.image_count > 0) { flags |= AR_FLAG_IMAGES; }
+    return flags;
+}
+
+// A message on the "ar" channel as an ArStatus (ArFailed when it is not one).
+int ar_read_status(string payload) {
+    if (payload == null) { return ArFailed; }
+    if (strcmp(payload, "running") == 0) { return ArRunning; }
+    if (strcmp(payload, "starting") == 0) { return ArStarting; }
+    if (strcmp(payload, "unsupported") == 0) { return ArUnsupported; }
+    if (strcmp(payload, "denied") == 0) { return ArDenied; }
+    if (strcmp(payload, "installing") == 0) { return ArInstalling; }
+    if (strcmp(payload, "paused") == 0) { return ArPaused; }
+    if (strcmp(payload, "tap") == 0) { return ArWaitingForTap; }
+    return ArFailed;
+}
+
+// 16 doubles from `at` as a matrix.
+ArMat4 ar_mat4_from(*double at) {
+    ArMat4 m;
+    for (i in 0..16) { m.m[i] = (float)at[i]; }
+    return m;
+}
+
+// True when every value of `m` is finite (not NaN or infinite).
+bool ar_mat4_finite(ArMat4 m) {
+    for (i in 0..16) {
+        float v = m.m[i];
+        if (v != v || v > 1e30 || v < -1e30) { return false; }
+    }
+    return true;
+}
+
+// The image values the native side filled, checked, as a camera image; false when they do
+// not describe one (unknown format, a missing plane, strides or sizes that do not cover the
+// pixels), so a handler never reads outside a buffer. No planes at all is a frame with no
+// picture (ArFrame.has_image false).
+bool ar_image_read(*int64 info, *ArCameraImage out) {
+    *out = ArCameraImage{};
+    int64 width = info[0];
+    int64 height = info[1];
+    int64 format = info[2];
+    if (width <= 0 || height <= 0 || width > 16384 || height > 16384) { return false; }
+    if (format < 0 || format > 4) { return false; }
+    out.width = (int)width;
+    out.height = (int)height;
+    out.format = (int)format;
+    out.plane_count = (int)info[3];
+    int64 rotation = info[4];
+    if (rotation != 0 && rotation != 90 && rotation != 180 && rotation != 270) { return false; }
+    out.rotation = (int)rotation;
+    out.front = info[5] != 0;
+    out.matrix = info[6] == 1 ? 1 : 0;
+    out.full_range = info[7] != 0;
+    out.timestamp_ns = info[8];
+    // No picture (the web, where the browser draws the camera): no planes, only the size.
+    if (out.plane_count == 0) { return true; }
+    int want = format <= 1 ? 2 : format == 4 ? 1 : 3;
+    if (out.plane_count != want) { return false; }
+    for (i in 0..want) {
+        *ArImagePlane plane = &out.planes[i];
+        plane.data = (*uint8)info[9 + i * 4];
+        int64 row_stride = info[10 + i * 4];
+        int64 pixel_stride = info[11 + i * 4];
+        plane.size = info[12 + i * 4];
+        if (plane.data == null || row_stride <= 0 || row_stride > 1 << 20) { return false; }
+        if (pixel_stride <= 0 || pixel_stride > 8) { return false; }
+        plane.row_stride = (int)row_stride;
+        plane.pixel_stride = (int)pixel_stride;
+        int rows = out.height;
+        int samples = out.width;
+        if (i > 0) {
+            rows = (out.height + 1) / 2;
+            samples = (out.width + 1) / 2;
+        }
+        int tail = want == 2 && i == 1 ? 2 : format == 4 ? 4 : 1;
+        if (want == 2 && i == 1 && plane.pixel_stride < 2) { return false; }
+        if (format == 4 && plane.pixel_stride < 4) { return false; }
+        int64 row_bytes = (int64)(samples - 1) * plane.pixel_stride + tail;
+        if ((int64)plane.row_stride < row_bytes) { return false; }
+        int64 need = (int64)(rows - 1) * plane.row_stride + row_bytes;
+        if (plane.size < need) { return false; }
+    }
+    return true;
+}
+
+// The camera values the native side filled, checked, into the frame; false when the
+// intrinsics do not describe an image or the pose is not a number.
+bool ar_camera_read(*double info, *ArFrame out) {
+    int tracking = (int)info[0];
+    if (tracking < ArTrackingNone || tracking > ArTrackingNormal) { tracking = ArTrackingNone; }
+    out.tracking = tracking;
+    int reason = (int)info[1];
+    if (reason < ArReasonNone || reason > ArReasonBadState) { reason = ArReasonBadState; }
+    out.reason = reason;
+    out.camera = ar_mat4_from(&info[2]);
+    out.intrinsics = ArIntrinsics{(float)info[18], (float)info[19], (float)info[20], (float)info[21], (int)info[22], (int)info[23]};
+    *ArIntrinsics k = &out.intrinsics;
+    if (!(k.fx > 0.0) || !(k.fy > 0.0) || k.width <= 0 || k.height <= 0) { return false; }
+    if (!ar_mat4_finite(out.camera)) { return false; }
+    return true;
+}
+
+// The buffers a frame's planes, outlines, anchors and points are read into, reused from one
+// frame to the next.
+List<ArPlane> _ar_planes;
+List<ArVec2> _ar_polygon;
+List<ArAnchor> _ar_anchors;
+List<ArPoint> _ar_points;
+List<ArTrackedImage> _ar_tracked;
+List<ArMesh> _ar_meshes;
+List<ArFace> _ar_faces;
+List<ArBody> _ar_bodies;
+
+// The image targets the session has, as ar_send_images last sent them: each one's name
+// (copied), whether it was refused before reaching the platform, and what was sent, by
+// ar_images_key.
+List<String> _ar_image_names;
+List<String> _ar_object_names;
+List<ArTrackedObject> _ar_objects_found;
+
+// The tracked-object values the native side filled, checked; false for a target the session
+// does not have or a pose that is not a number.
+bool ar_tracked_object_read(*double info, *ArTrackedObject out) {
+    *out = ArTrackedObject{id: (int64)info[0], index: (int)info[1]};
+    if (out.index < 0 || out.index >= (int)_ar_object_names.size) { return false; }
+    out.name = _ar_object_names.data[out.index].data;
+    if (out.name == null) { out.name = ""; }
+    out.pose = ar_mat4_from(&info[2]);
+    if (!ar_mat4_finite(out.pose)) { return false; }
+    out.center = ArVec3{(float)info[18], (float)info[19], (float)info[20]};
+    out.extent = ArVec3{(float)info[21], (float)info[22], (float)info[23]};
+    return true;
+}
+
+// Sends the object targets to the platform (ar_native_objects, then one ar_native_object_add
+// each, the path resolved as an image target's) and keeps their names; how many it loaded.
+int ar_send_objects(*ArObjectTarget objects, int count) {
+    for (i in 0..(int)_ar_object_names.size) { String_free(&_ar_object_names.data[i]); }
+    _ar_object_names.clear();
+    if (objects == null || count < 0) { count = 0; }
+    ar_native_objects(count);
+    int loaded = 0;
+    for (i in 0..count) {
+        String name;
+        name.append(objects[i].name != null ? objects[i].name : "");
+        _ar_object_names.push(name);
+        bool owned;
+        string path = ar_image_path(objects[i].path, &owned);
+        if (path != null && ar_native_object_add(i, path) != 0) { loaded++; }
+        if (owned) { free((*void)path); }
+    }
+    return loaded;
+}
+List<bool> _ar_image_refused;
+int64 _ar_images_sent;
+
+// Reads the lent frame's planes, anchors, points, light and depth into `frame`, as `flags`
+// asked.
+void ar_frame_fill(*ArFrame frame, int flags) {
+    _ar_planes.clear();
+    _ar_polygon.clear();
+    _ar_anchors.clear();
+    _ar_points.clear();
+    _ar_tracked.clear();
+    _ar_meshes.clear();
+    _ar_faces.clear();
+    _ar_bodies.clear();
+    double[AR_LIGHT_INFO] values;
+    if ((flags & (AR_FLAG_HORIZONTAL | AR_FLAG_VERTICAL)) != 0) {
+        int count = ar_native_plane_count();
+        if (count > AR_MAX_PLANES) { count = AR_MAX_PLANES; }
+        float[AR_MAX_POLYGON * 2] outline;
+        List<int> starts;
+        defer starts.free();
+        for (i in 0..count) {
+            int n = ar_native_plane(i, &values[0], &outline[0], AR_MAX_POLYGON);
+            if (n < 0) { continue; }
+            if (n > AR_MAX_POLYGON) { n = AR_MAX_POLYGON; }
+            ArPlane plane = ArPlane{id: (int64)values[0], alignment: (int)values[1], tracking: (int)values[2]};
+            plane.pose = ar_mat4_from(&values[3]);
+            plane.extent_x = (float)values[19];
+            plane.extent_z = (float)values[20];
+            plane.subsumed_by = (int64)values[21];
+            plane.classification = (int)values[22];
+            if (plane.classification < ArPlaneNone || plane.classification > ArPlaneDoor) { plane.classification = ArPlaneNone; }
+            if (plane.alignment < ArHorizontalUp || plane.alignment > ArVertical) { plane.alignment = ArHorizontalUp; }
+            if (!ar_mat4_finite(plane.pose)) { continue; }
+            plane.polygon_count = n;
+            starts.push(_ar_polygon.size);
+            for (p in 0..n) { _ar_polygon.push(ArVec2{outline[p * 2], outline[p * 2 + 1]}); }
+            _ar_planes.push(plane);
+        }
+        // The outline buffer may have moved while it grew: point into it at the end.
+        for (i in 0..(int)_ar_planes.size) { _ar_planes.data[i].polygon = &_ar_polygon.data[starts.data[i]]; }
+    }
+    int anchors = ar_native_anchor_count();
+    for (i in 0..anchors) {
+        ar_native_anchor(i, &values[0]);
+        ArAnchor anchor = ArAnchor{id: (int64)values[0], tracking: (int)values[1], pose: ar_mat4_from(&values[2])};
+        if (ar_mat4_finite(anchor.pose)) { _ar_anchors.push(anchor); }
+    }
+    if ((flags & AR_FLAG_POINTS) != 0) {
+        _ar_points.resize(AR_MAX_POINTS);
+        int n = ar_native_points((*float)&_ar_points.data[0], AR_MAX_POINTS);
+        if (n < 0) { n = 0; }
+        if (n > AR_MAX_POINTS) { n = AR_MAX_POINTS; }
+        _ar_points.size = n;
+    }
+    if ((flags & AR_FLAG_IMAGES) != 0) {
+        int count = ar_native_tracked_image_count();
+        if (count > AR_MAX_IMAGES) { count = AR_MAX_IMAGES; }
+        for (i in 0..count) {
+            ar_native_tracked_image(i, &values[0]);
+            ArTrackedImage image;
+            if (ar_tracked_image_read(&values[0], &image)) { _ar_tracked.push(image); }
+        }
+    }
+    frame.images = _ar_tracked.size > 0 ? &_ar_tracked.data[0] : null;
+    frame.image_count = (int)_ar_tracked.size;
+    _ar_objects_found.clear();
+    if ((flags & AR_FLAG_OBJECTS) != 0) {
+        double[AR_OBJECT_INFO] ov;
+        int count = ar_native_tracked_object_count();
+        for (i in 0..count) {
+            ar_native_tracked_object(i, &ov[0]);
+            ArTrackedObject o;
+            if (ar_tracked_object_read(&ov[0], &o)) { _ar_objects_found.push(o); }
+        }
+    }
+    frame.objects = _ar_objects_found.size > 0 ? &_ar_objects_found.data[0] : null;
+    frame.object_count = (int)_ar_objects_found.size;
+    if ((flags & AR_FLAG_MESH) != 0) {
+        double[AR_MESH_INFO] mv;
+        int count = ar_native_mesh_count();
+        for (i in 0..count) {
+            ar_native_mesh(i, &mv[0]);
+            ArMesh m = ArMesh{id: (int64)mv[0], vertex_count: (int)mv[18], vertex_stride: (int)mv[19], normal_stride: (int)mv[21],
+                face_count: (int)mv[23], index_bytes: (int)mv[24]};
+            m.pose = ar_mat4_from(&mv[1]);
+            m.vertices = (*uint8)(int64)mv[17];
+            m.normals = (*uint8)(int64)mv[20];
+            m.faces = (*uint8)(int64)mv[22];
+            // a mesh the platform lent whole: data, sane strides and index sizes
+            if (m.vertices == null || m.faces == null || m.vertex_count <= 0 || m.face_count <= 0 || m.vertex_stride < 12 ||
+                (m.normals != null && m.normal_stride < 12) || (m.index_bytes != 2 && m.index_bytes != 4) ||
+                !ar_mat4_finite(m.pose)) { continue; }
+            _ar_meshes.push(m);
+        }
+    }
+    frame.meshes = _ar_meshes.size > 0 ? &_ar_meshes.data[0] : null;
+    frame.mesh_count = (int)_ar_meshes.size;
+    if ((flags & AR_FLAG_FRONT) != 0) {
+        double[AR_FACE_INFO] fv;
+        int count = ar_native_face_count();
+        for (i in 0..count) {
+            ar_native_face(i, &fv[0]);
+            ArFace f;
+            if (ar_face_read(&fv[0], &f)) _ar_faces.push(f);
+        }
+    }
+    frame.faces = _ar_faces.size > 0 ? &_ar_faces.data[0] : null;
+    frame.face_count = (int)_ar_faces.size;
+    if ((flags & AR_FLAG_BODY) != 0) {
+        double[AR_BODY_INFO] bv;
+        int count = ar_native_body_count();
+        for (i in 0..count) {
+            ar_native_body(i, &bv[0]);
+            ArBody b = ArBody{id: (int64)bv[0], joint_count: (int)bv[17], scale: (float)bv[19], tracking: (int)bv[20]};
+            b.pose = ar_mat4_from(&bv[1]);
+            b.joints = (*float)(int64)bv[18];
+            if (b.joints == null || b.joint_count <= 0 || b.joint_count > 256 || !ar_mat4_finite(b.pose)) { continue; }
+            if (b.tracking < ArTrackingNone || b.tracking > ArTrackingNormal) { b.tracking = ArTrackingNone; }
+            _ar_bodies.push(b);
+        }
+    }
+    frame.bodies = _ar_bodies.size > 0 ? &_ar_bodies.data[0] : null;
+    frame.body_count = (int)_ar_bodies.size;
+    frame.planes = _ar_planes.size > 0 ? &_ar_planes.data[0] : null;
+    frame.plane_count = (int)_ar_planes.size;
+    frame.anchors = _ar_anchors.size > 0 ? &_ar_anchors.data[0] : null;
+    frame.anchor_count = (int)_ar_anchors.size;
+    frame.points = _ar_points.size > 0 ? &_ar_points.data[0] : null;
+    frame.point_count = (int)_ar_points.size;
+    if ((flags & (AR_FLAG_LIGHT | AR_FLAG_LIGHT_HDR)) != 0 && ar_native_light(&values[0]) != 0) { ar_light_read(&values[0], &frame.light); }
+    int64[AR_DEPTH_INFO] depth;
+    if ((flags & (AR_FLAG_DEPTH | AR_FLAG_PEOPLE)) != 0 && ar_native_depth(&depth[0]) != 0) { ar_depth_read(&depth[0], &frame.depth); }
+    double[14] earth;
+    if ((flags & AR_FLAG_GEO) != 0 && ar_native_earth(&earth[0]) != 0) { frame.has_earth = ar_earth_read(&earth[0], &frame.earth); }
+    int64[4] sem;
+    if ((flags & AR_FLAG_SEMANTICS) != 0 && ar_native_semantics(&sem[0]) != 0) { ar_semantics_read(&sem[0], &frame.semantics); }
+}
+
+// The face values the native side filled, checked; false for a face without a whole mesh
+// or with a pose that is not a number. Weights are clamped to 0..1.
+bool ar_face_read(*double info, *ArFace out) {
+    *out = ArFace{id: (int64)info[0], vertex_count: (int)info[18], triangle_count: (int)info[21], index_bytes: (int)info[22],
+                  blend_shape_count: (int)info[75], tracking: (int)info[159]};
+    out.pose = ar_mat4_from(&info[1]);
+    out.vertices = (*float)(int64)info[17];
+    out.uvs = (*float)(int64)info[19];
+    out.indices = (*uint8)(int64)info[20];
+    if (out.vertices == null || out.indices == null || out.vertex_count <= 0 || out.triangle_count <= 0
+        || (out.index_bytes != 2 && out.index_bytes != 4) || !ar_mat4_finite(out.pose)) { return false; }
+    if (out.blend_shape_count < 0 || out.blend_shape_count > 52) { out.blend_shape_count = 0; }
+    for (k in 0..out.blend_shape_count) {
+        double w = info[23 + k];
+        out.blend_shapes[k] = w != w || w < 0.0 ? 0.0 : w > 1.0 ? 1.0 : (float)w;
+    }
+    out.left_eye = ar_mat4_from(&info[76]);
+    out.right_eye = ar_mat4_from(&info[92]);
+    out.look_at = ArVec3{(float)info[108], (float)info[109], (float)info[110]};
+    out.nose_tip = ar_mat4_from(&info[111]);
+    out.forehead_left = ar_mat4_from(&info[127]);
+    out.forehead_right = ar_mat4_from(&info[143]);
+    if (out.tracking < ArTrackingNone || out.tracking > ArTrackingNormal) { out.tracking = ArTrackingNone; }
+    return true;
+}
+
+// The name of body joint j (ARKit's, as "left_hand_joint") into name and its parent's index,
+// -1 for the root; -2 when there is no such joint (or no body tracking on the platform).
+int ar_body_joint(int joint, *String name) {
+    char[128] buf;
+    buf[0] = 0;
+    int parent = ar_native_body_joint(joint, &buf[0], 128);
+    buf[127] = 0;
+    name.clear();
+    if (parent >= -1) { name.append((string)&buf[0]); }
+    return parent;
+}
+
+// The semantics values the native side filled, checked; left empty when they do not describe
+// an image.
+void ar_semantics_read(*int64 info, *ArSemantics out) {
+    *out = ArSemantics{};
+    if (info[0] <= 0 || info[1] <= 0 || info[0] > 4096 || info[1] > 4096 || info[2] == 0) { return; }
+    *out = ArSemantics{width: (int)info[0], height: (int)info[1], labels: (*uint8)info[2], confidence: (*uint8)info[3]};
+}
+
+// The Earth values the native side filled, checked; false when they are not numbers.
+bool ar_earth_read(*double info, *ArEarth out) {
+    for (i in 0..14) {
+        double v = info[i];
+        if (v != v || v > 1e9 || v < -1e9) { return false; }
+    }
+    *out = ArEarth{state: (int)info[0], tracking: (int)info[1], latitude: info[2], longitude: info[3], altitude: info[4],
+                   horizontal_accuracy: info[5], vertical_accuracy: info[6], yaw_accuracy: info[11]};
+    for (k in 0..4) { out.rotation[k] = (float)info[7 + k]; }
+    if (out.tracking < ArTrackingNone || out.tracking > ArTrackingNormal) { out.tracking = ArTrackingNone; }
+    return true;
+}
