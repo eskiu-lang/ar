@@ -52,6 +52,8 @@ static int loadArcore(void) {
 #define FLAG_CLOUD 2048
 #define FLAG_GEO 4096
 #define FLAG_SEMANTICS 8192
+#define FLAG_FRONT 32768
+#define MAX_FACES 3
 #define MAX_IMAGES 100
 
 // One frame's worth of everything Eskiu reads, owned by this file.
@@ -80,6 +82,12 @@ typedef struct {
     uint8_t *semantics;
     size_t semantics_cap;
     int semantics_width, semantics_height, has_semantics, has_confidence;
+    int face_count;
+    double faces[MAX_FACES][160];
+    float *face_vertices[MAX_FACES];
+    float *face_uvs[MAX_FACES];
+    uint16_t *face_indices[MAX_FACES];
+    size_t face_vertex_cap[MAX_FACES], face_index_cap[MAX_FACES];
 } Snapshot;
 
 static Snapshot snapshots[3];
@@ -504,6 +512,78 @@ static void readSemantics(Snapshot *s) {
     p_ArImage_release(labels);
 }
 
+// The faces ARCore's Augmented Faces tracks (front camera): the center pose, the mesh
+// (copied into the snapshot: ARCore's arrays live only until the next update) and the
+// nose tip's and forehead regions' poses.
+static void readFaces(Snapshot *s) {
+    s->face_count = 0;
+    ArTrackableList *list = NULL;
+    p_ArTrackableList_create(session, &list);
+    p_ArSession_getAllTrackables(session, AR_TRACKABLE_FACE_, list);
+    int32_t n = 0;
+    p_ArTrackableList_getSize(session, list, &n);
+    ArPose *pose = NULL;
+    p_ArPose_create(session, NULL, &pose);
+    for (int i = 0; i < n && s->face_count < MAX_FACES; i++) {
+        ArTrackable *item = NULL;
+        p_ArTrackableList_acquireItem(session, list, i, &item);
+        ArAugmentedFace *face = (ArAugmentedFace *)item;
+        ArTrackingState state = AR_TRACKING_STATE_STOPPED_;
+        p_ArTrackable_getTrackingState(session, item, &state);
+        const float *vertices = NULL;
+        const float *uvs = NULL;
+        const uint16_t *indices = NULL;
+        int32_t vn = 0, un = 0, tn = 0;
+        if (state == AR_TRACKING_STATE_TRACKING_) {
+            p_ArAugmentedFace_getMeshVertices(session, face, &vertices, &vn);
+            p_ArAugmentedFace_getMeshTextureCoordinates(session, face, &uvs, &un);
+            p_ArAugmentedFace_getMeshTriangleIndices(session, face, &indices, &tn);
+        }
+        if (!vertices || !indices || vn <= 0 || tn <= 0) {
+            p_ArTrackable_release(item);
+            continue;
+        }
+        int k = s->face_count++;
+        if (s->face_vertex_cap[k] < (size_t)vn) {
+            free(s->face_vertices[k]);
+            free(s->face_uvs[k]);
+            s->face_vertices[k] = malloc(sizeof(float) * 3 * vn);
+            s->face_uvs[k] = malloc(sizeof(float) * 2 * vn);
+            s->face_vertex_cap[k] = vn;
+        }
+        if (s->face_index_cap[k] < (size_t)tn) {
+            free(s->face_indices[k]);
+            s->face_indices[k] = malloc(sizeof(uint16_t) * 3 * tn);
+            s->face_index_cap[k] = tn;
+        }
+        memcpy(s->face_vertices[k], vertices, sizeof(float) * 3 * vn);
+        if (uvs && un == vn) memcpy(s->face_uvs[k], uvs, sizeof(float) * 2 * vn);
+        memcpy(s->face_indices[k], indices, sizeof(uint16_t) * 3 * tn);
+        double *info = s->faces[k];
+        memset(info, 0, sizeof(double) * 160);
+        // ARCore tracks one face at a time: its id stays while it is tracked
+        info[0] = (double)(k + 1);
+        p_ArAugmentedFace_getCenterPose(session, face, pose);
+        poseMatrix(pose, &info[1]);
+        info[17] = (double)(intptr_t)s->face_vertices[k];
+        info[18] = vn;
+        info[19] = uvs && un == vn ? (double)(intptr_t)s->face_uvs[k] : 0;
+        info[20] = (double)(intptr_t)s->face_indices[k];
+        info[21] = tn;
+        info[22] = 2;
+        p_ArAugmentedFace_getRegionPose(session, face, AR_AUGMENTED_FACE_REGION_NOSE_TIP_, pose);
+        poseMatrix(pose, &info[111]);
+        p_ArAugmentedFace_getRegionPose(session, face, AR_AUGMENTED_FACE_REGION_FOREHEAD_LEFT_, pose);
+        poseMatrix(pose, &info[127]);
+        p_ArAugmentedFace_getRegionPose(session, face, AR_AUGMENTED_FACE_REGION_FOREHEAD_RIGHT_, pose);
+        poseMatrix(pose, &info[143]);
+        info[159] = trackingOf(state);
+        p_ArTrackable_release(item);
+    }
+    p_ArPose_destroy(pose);
+    p_ArTrackableList_destroy(list);
+}
+
 // The image targets ARCore knows of, tracked or seen before (not stopped).
 static void readImages(Snapshot *s) {
     s->image_count = 0;
@@ -594,6 +674,8 @@ static int step(void) {
         else s->has_semantics = 0;
         if (flags & FLAG_IMAGES) readImages(s);
         else s->image_count = 0;
+        if (flags & FLAG_FRONT) readFaces(s);
+        else s->face_count = 0;
     }
     pthread_mutex_unlock(&session_lock);
     if (!ok) return 1;
@@ -637,6 +719,7 @@ static void chooseCameraConfig(void) {
     ArCameraConfigList *list = NULL;
     p_ArCameraConfigFilter_create(session, &filter);
     p_ArCameraConfigList_create(session, &list);
+    if (flags & FLAG_FRONT) p_ArCameraConfigFilter_setFacingDirection(session, filter, AR_CAMERA_CONFIG_FACING_DIRECTION_FRONT_);
     p_ArSession_getSupportedCameraConfigsWithFilter(session, filter, list);
     int32_t n = 0;
     p_ArCameraConfigList_getSize(session, list, &n);
@@ -727,13 +810,16 @@ static int configure(void) {
     p_ArConfig_setTextureUpdateMode(session, config, AR_TEXTURE_UPDATE_MODE_EXPOSE_HARDWARE_BUFFER_);
     p_ArConfig_setUpdateMode(session, config, AR_UPDATE_MODE_LATEST_CAMERA_IMAGE_);
     p_ArConfig_setFocusMode(session, config, AR_FOCUS_MODE_AUTO_);
-    p_ArConfig_setPlaneFindingMode(session, config, flags & (FLAG_HORIZONTAL | FLAG_VERTICAL));
-    p_ArConfig_setLightEstimationMode(session, config, (flags & FLAG_LIGHT_HDR) ? AR_LIGHT_ESTIMATION_MODE_ENVIRONMENTAL_HDR_ :
+    // Augmented Faces takes no planes and only the ambient light estimate (as Viro sets it)
+    int front = (flags & FLAG_FRONT) != 0;
+    p_ArConfig_setPlaneFindingMode(session, config, front ? 0 : flags & (FLAG_HORIZONTAL | FLAG_VERTICAL));
+    if (front) p_ArConfig_setAugmentedFaceMode(session, config, AR_AUGMENTED_FACE_MODE_MESH3D_);
+    p_ArConfig_setLightEstimationMode(session, config, (flags & FLAG_LIGHT_HDR) && !front ? AR_LIGHT_ESTIMATION_MODE_ENVIRONMENTAL_HDR_ :
                                       (flags & FLAG_LIGHT) ? AR_LIGHT_ESTIMATION_MODE_AMBIENT_INTENSITY_ : 0);
     int32_t depth = 0;
     if (flags & FLAG_DEPTH) p_ArSession_isDepthModeSupported(session, AR_DEPTH_MODE_AUTOMATIC_, &depth);
     p_ArConfig_setDepthMode(session, config, depth ? AR_DEPTH_MODE_AUTOMATIC_ : 0);
-    p_ArConfig_setCloudAnchorMode(session, config, (flags & FLAG_CLOUD) ? AR_CLOUD_ANCHOR_MODE_ENABLED_ : 0);
+    p_ArConfig_setCloudAnchorMode(session, config, (flags & FLAG_CLOUD) && !front ? AR_CLOUD_ANCHOR_MODE_ENABLED_ : 0);
     int32_t geo = 0;
     if (flags & FLAG_GEO) p_ArSession_isGeospatialModeSupported(session, AR_GEOSPATIAL_MODE_ENABLED_, &geo);
     p_ArConfig_setGeospatialMode(session, config, geo ? AR_GEOSPATIAL_MODE_ENABLED_ : 0);
@@ -1321,6 +1407,27 @@ int ar_native_image_state(int index) {
     int state = index >= 0 && index < target_count ? targets[index].state : 2;
     pthread_mutex_unlock(&session_lock);
     return state;
+}
+
+int ar_native_face_count(void) {
+    Snapshot *s = lentSnapshot();
+    return s ? s->face_count : 0;
+}
+
+void ar_native_face(int index, double *info) {
+    Snapshot *s = lentSnapshot();
+    memset(info, 0, sizeof(double) * 160);
+    if (s && index >= 0 && index < s->face_count) memcpy(info, s->faces[index], sizeof(double) * 160);
+}
+
+// ARCore has no body tracking.
+int ar_native_body_count(void) { return 0; }
+
+void ar_native_body(int index, double *info) { memset(info, 0, sizeof(double) * 21); }
+
+int ar_native_body_joint(int joint, char *name, int capacity) {
+    if (capacity > 0) name[0] = 0;
+    return -2;
 }
 
 int ar_native_tracked_image_count(void) {

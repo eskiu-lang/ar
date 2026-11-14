@@ -28,6 +28,10 @@ typedef struct ArHitResult_ ArHitResult;
 typedef struct ArHitResultList_ ArHitResultList;
 typedef struct ArAugmentedImage_ ArAugmentedImage;
 typedef struct ArAugmentedImageDatabase_ ArAugmentedImageDatabase;
+typedef struct ArAugmentedFace_ ArAugmentedFace;
+typedef int32_t ArAugmentedFaceMode;
+typedef int32_t ArAugmentedFaceRegionType;
+typedef int32_t ArCameraConfigFacingDirection;
 typedef int32_t ArAugmentedImageTrackingMethod;
 typedef int32_t ArStatus;
 typedef int32_t ArAvailability;
@@ -81,6 +85,12 @@ enum {
     AR_TRACKABLE_POINT_ = 0x41520102,
     AR_TRACKABLE_DEPTH_POINT_ = 0x41520111,
     AR_TRACKABLE_AUGMENTED_IMAGE_ = 0x41520104,
+    AR_TRACKABLE_FACE_ = 0x41520105,
+    AR_AUGMENTED_FACE_MODE_MESH3D_ = 2,
+    AR_AUGMENTED_FACE_REGION_NOSE_TIP_ = 0,
+    AR_AUGMENTED_FACE_REGION_FOREHEAD_LEFT_ = 1,
+    AR_AUGMENTED_FACE_REGION_FOREHEAD_RIGHT_ = 2,
+    AR_CAMERA_CONFIG_FACING_DIRECTION_FRONT_ = 1,
     AR_AUGMENTED_IMAGE_TRACKING_METHOD_FULL_TRACKING_ = 1,
     AR_AUGMENTED_IMAGE_TRACKING_METHOD_LAST_KNOWN_POSE_ = 2,
     AR_PLANE_HORIZONTAL_DOWNWARD_FACING_ = 1,
@@ -211,6 +221,13 @@ enum {
     X(ArStatus, ArAugmentedImageDatabase_addImageWithPhysicalSize, (const ArSession *session, ArAugmentedImageDatabase *augmented_image_database, const char *image_name, const uint8_t *image_grayscale_pixels, int32_t image_width_in_pixels, int32_t image_height_in_pixels, int32_t image_stride_in_pixels, float image_width_in_meters, int32_t *out_index)) \
     X(void, ArConfig_setAugmentedImageDatabase, (const ArSession *session, ArConfig *config, const ArAugmentedImageDatabase *augmented_image_database)) \
     X(void, ArAugmentedImage_getCenterPose, (const ArSession *session, const ArAugmentedImage *augmented_image, ArPose *out_pose)) \
+    X(void, ArConfig_setAugmentedFaceMode, (const ArSession *session, ArConfig *config, ArAugmentedFaceMode augmented_face_mode)) \
+    X(void, ArCameraConfigFilter_setFacingDirection, (const ArSession *session, ArCameraConfigFilter *filter, ArCameraConfigFacingDirection facing_direction_filter)) \
+    X(void, ArAugmentedFace_getMeshVertices, (const ArSession *session, const ArAugmentedFace *face, const float **out_vertices, int32_t *out_number_of_vertices)) \
+    X(void, ArAugmentedFace_getMeshTextureCoordinates, (const ArSession *session, const ArAugmentedFace *face, const float **out_texture_coordinates, int32_t *out_number_of_texture_coordinates)) \
+    X(void, ArAugmentedFace_getMeshTriangleIndices, (const ArSession *session, const ArAugmentedFace *face, const uint16_t **out_triangle_indices, int32_t *out_number_of_triangles)) \
+    X(void, ArAugmentedFace_getRegionPose, (const ArSession *session, const ArAugmentedFace *face, const ArAugmentedFaceRegionType region_type, ArPose *out_pose)) \
+    X(void, ArAugmentedFace_getCenterPose, (const ArSession *session, const ArAugmentedFace *face, ArPose *out_pose)) \
     X(void, ArAugmentedImage_getExtentX, (const ArSession *session, const ArAugmentedImage *augmented_image, float *out_extent_x)) \
     X(void, ArAugmentedImage_getExtentZ, (const ArSession *session, const ArAugmentedImage *augmented_image, float *out_extent_z)) \
     X(void, ArAugmentedImage_getIndex, (const ArSession *session, const ArAugmentedImage *augmented_image, int32_t *out_index)) \
