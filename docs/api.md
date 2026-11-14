@@ -365,14 +365,6 @@ struct ArMesh {
 }
 ```
 
-A frame of the session, borrowed for the handler's call. `image` is the camera picture.
-`camera` is the camera's pose (camera to world, axes along the picture as the sensor gives
-it), `intrinsics` the picture's, `tracking` and `reason` how well it is tracked. Planes,
-anchors, image targets found and points are arrays of `*_count` items (planes, images and
-points only when the options asked for them); `light` and `depth` are set when asked for
-and available. `has_image` is false where the platform gives no camera picture (the web
-without WebXR raw camera access, where the browser draws the camera itself): `image` is
-then empty, with no planes, and only its size and rotation are set (the viewport's).
 A piece of the world's mesh (LiDAR scene reconstruction on iOS, ArOptions.mesh): an id
 that stays while it is tracked, its pose, and its triangles in the pose's space, borrowed
 for the handler's call from where ARKit keeps them: `vertex_count` positions (3 floats
@@ -428,6 +420,15 @@ struct ArFrame {
     bool has_image;
 }
 ```
+
+A frame of the session, borrowed for the handler's call. `image` is the camera picture.
+`camera` is the camera's pose (camera to world, axes along the picture as the sensor gives
+it), `intrinsics` the picture's, `tracking` and `reason` how well it is tracked. Planes,
+anchors, image targets found and points are arrays of `*_count` items (planes, images and
+points only when the options asked for them); `light` and `depth` are set when asked for
+and available. `has_image` is false where the platform gives no camera picture (the web
+without WebXR raw camera access, where the browser draws the camera itself): `image` is
+then empty, with no planes, and only its size and rotation are set (the viewport's).
 
 ### AR_FLAG_HORIZONTAL, AR_FLAG_VERTICAL, AR_FLAG_LIGHT, AR_FLAG_DEPTH, AR_FLAG_PEOPLE, AR_FLAG_MESH
 
