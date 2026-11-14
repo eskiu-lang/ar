@@ -1073,6 +1073,33 @@ static uint8_t *semanticCopy;
 static size_t semanticCap;
 #ifdef ESKIU_ARCORE_GEO
 static CLLocationManager *location;
+static int garFlags;
+
+// Earth needs the location: ARCore refuses a geospatial configuration until it is granted, so
+// the session is configured without Earth first and again once the user allows it.
+@interface EskiuGarLocation : NSObject <CLLocationManagerDelegate>
+@end
+@implementation EskiuGarLocation
+- (void)locationManagerDidChangeAuthorization:(CLLocationManager *)manager {
+    CLAuthorizationStatus s = manager.authorizationStatus;
+    if ((s == kCLAuthorizationStatusAuthorizedWhenInUse || s == kCLAuthorizationStatusAuthorizedAlways) && gar &&
+        (garFlags & 4096))
+        dispatch_async(dispatch_get_main_queue(), ^{ garConfigure(garFlags); });
+}
+@end
+static EskiuGarLocation *locationDelegate;
+
+static BOOL locationGranted(void) {
+    if (!location) {
+        location = [CLLocationManager new];
+        locationDelegate = [EskiuGarLocation new];
+        location.delegate = locationDelegate;
+    }
+    CLAuthorizationStatus s = location.authorizationStatus;
+    if (s == kCLAuthorizationStatusNotDetermined) [location requestWhenInUseAuthorization];
+    return (s == kCLAuthorizationStatusAuthorizedWhenInUse || s == kCLAuthorizationStatusAuthorizedAlways) &&
+           location.accuracyAuthorization == CLAccuracyAuthorizationFullAccuracy;
+}
 #endif
 
 // Makes the ARCore session for the flags asked for (2048 cloud anchors, 4096 Earth, 8192
@@ -1101,10 +1128,10 @@ static void garConfigure(int flags) {
     if (flags & 2048) config.cloudAnchorMode = GARCloudAnchorModeEnabled;
 #endif
 #ifdef ESKIU_ARCORE_GEO
+    garFlags = flags;
     if ((flags & 4096) && [gar isGeospatialModeSupported:GARGeospatialModeEnabled]) {
-        config.geospatialMode = GARGeospatialModeEnabled;
-        if (!location) location = [CLLocationManager new];
-        [location requestWhenInUseAuthorization];
+        if (locationGranted()) config.geospatialMode = GARGeospatialModeEnabled;
+        else NSLog(@"ar: Earth waits for the location permission (full accuracy)");
     }
 #endif
 #ifdef ESKIU_ARCORE_SEMANTICS
