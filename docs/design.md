@@ -116,7 +116,7 @@ package's "optional".
   (each real function assigned to the package's pointer type with warnings as errors, each
   enum value compared), and every one is exported by `libarcore_sdk_c.so` 1.57.0
   (arm64-v8a, `llvm-nm -D`). A wrong parameter type makes the check fail.
-- `native/android/ar.c` compiles with the NDK's clang (`-Wall -Wextra -Werror`, API 27).
+- `native/android/ar.c` (with the parts it `#include`s, `*.inc`: one translation unit) compiles with the NDK's clang (`-Wall -Wextra -Werror`, API 27).
 - A throwaway app on the package built with `ui build android` goes through Gradle with the
   ARCore dependency: the APK holds `libarcore_sdk_c.so` for each ABI, the app's library
   exports `ar_native_*` and the `EskiuAr` natives, `org.eskiu.ar.EskiuAr` is in the dex and
@@ -174,7 +174,7 @@ filled, the newest waiting, and the lent one.
 
 ### What was checked without a device
 
-`native/ios/ar.m` compiles warning-free (`-Wall -Wextra -Werror`) for the simulator and for
+`native/ios/ar.m` (with its `*.inc` parts) compiles warning-free (`-Wall -Wextra -Werror`) for the simulator and for
 devices (iOS 15 SDK target), and the throwaway app's `ui build ios` simulator build links
 ARKit (`ARSession`, `ARWorldTrackingConfiguration`, `ARRaycastQuery`, `ARPlaneAnchor`,
 `ARAnchor`, `ARReferenceImage`, `ARImageAnchor`) with the camera usage text in its
