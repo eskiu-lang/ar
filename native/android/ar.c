@@ -49,6 +49,8 @@ static int loadArcore(void) {
 #define FLAG_POINTS 16
 #define FLAG_LIGHT_HDR 32
 #define FLAG_IMAGES 64
+#define FLAG_CLOUD 2048
+#define FLAG_GEO 4096
 #define MAX_IMAGES 100
 
 // One frame's worth of everything Eskiu reads, owned by this file.
@@ -72,6 +74,8 @@ typedef struct {
     int depth_width, depth_height, has_depth;
     int image_count;
     double images[MAX_IMAGES][22];
+    int has_earth;
+    double earth[14];
 } Snapshot;
 
 static Snapshot snapshots[3];
@@ -342,6 +346,40 @@ static void readAnchors(Snapshot *s) {
     p_ArPose_destroy(pose);
 }
 
+// Earth (with the geospatial flag): its state, tracking, and the camera's geospatial pose
+// (latitude, longitude, altitude, their accuracies, the east-up-south quaternion, the yaw
+// accuracy).
+static void readEarth(Snapshot *s) {
+    s->has_earth = 0;
+    ArEarth *earth = NULL;
+    p_ArSession_acquireEarth(session, &earth);
+    if (!earth) return;
+    ArEarthState es = 0;
+    ArTrackingState ts = AR_TRACKING_STATE_STOPPED_;
+    p_ArEarth_getEarthState(session, earth, &es);
+    p_ArTrackable_getTrackingState(session, (ArTrackable *)earth, &ts);
+    double *e = s->earth;
+    memset(e, 0, sizeof(s->earth));
+    e[0] = es;
+    e[1] = trackingOf(ts);
+    if (es == AR_EARTH_STATE_ENABLED_ && ts == AR_TRACKING_STATE_TRACKING_) {
+        ArGeospatialPose *g = NULL;
+        p_ArGeospatialPose_create(session, &g);
+        p_ArEarth_getCameraGeospatialPose(session, earth, g);
+        p_ArGeospatialPose_getLatitudeLongitude(session, g, &e[2], &e[3]);
+        p_ArGeospatialPose_getAltitude(session, g, &e[4]);
+        p_ArGeospatialPose_getHorizontalAccuracy(session, g, &e[5]);
+        p_ArGeospatialPose_getVerticalAccuracy(session, g, &e[6]);
+        float q[4] = {0, 0, 0, 1};
+        p_ArGeospatialPose_getEastUpSouthQuaternion(session, g, q);
+        for (int k = 0; k < 4; k++) e[7 + k] = q[k];
+        p_ArGeospatialPose_getOrientationYawAccuracy(session, g, &e[11]);
+        p_ArGeospatialPose_destroy(g);
+    }
+    p_ArTrackable_release((ArTrackable *)earth);
+    s->has_earth = 1;
+}
+
 static void readPoints(Snapshot *s) {
     s->point_count = 0;
     ArPointCloud *cloud = NULL;
@@ -499,6 +537,8 @@ static int step(void) {
         if (flags & (FLAG_HORIZONTAL | FLAG_VERTICAL)) readPlanes(s);
         else s->plane_count = 0;
         readAnchors(s);
+        if (flags & FLAG_GEO) readEarth(s);
+        else s->has_earth = 0;
         if (flags & FLAG_POINTS) readPoints(s);
         else s->point_count = 0;
         if (flags & (FLAG_LIGHT | FLAG_LIGHT_HDR)) readLight(s);
@@ -646,6 +686,10 @@ static int configure(void) {
     int32_t depth = 0;
     if (flags & FLAG_DEPTH) p_ArSession_isDepthModeSupported(session, AR_DEPTH_MODE_AUTOMATIC_, &depth);
     p_ArConfig_setDepthMode(session, config, depth ? AR_DEPTH_MODE_AUTOMATIC_ : 0);
+    p_ArConfig_setCloudAnchorMode(session, config, (flags & FLAG_CLOUD) ? AR_CLOUD_ANCHOR_MODE_ENABLED_ : 0);
+    int32_t geo = 0;
+    if (flags & FLAG_GEO) p_ArSession_isGeospatialModeSupported(session, AR_GEOSPATIAL_MODE_ENABLED_, &geo);
+    p_ArConfig_setGeospatialMode(session, config, geo ? AR_GEOSPATIAL_MODE_ENABLED_ : 0);
     ArAugmentedImageDatabase *database = buildDatabase();
     p_ArConfig_setAugmentedImageDatabase(session, config, database);
     if (database) p_ArAugmentedImageDatabase_destroy(database);
@@ -978,6 +1022,171 @@ double ar_native_anchor_add(float *matrix, double plane_id) {
     }
     pthread_mutex_unlock(&session_lock);
     return id;
+}
+
+// --- cloud anchors and Earth: ARCore's futures, kept as jobs the Eskiu side polls ---
+
+#define MAX_JOBS 32
+typedef struct { int64_t id; int kind; ArFuture *future; } Job;
+static Job jobs[MAX_JOBS];
+static int job_count;
+static int64_t next_job = 1;
+
+// Keeps an anchor ARCore handed over; its id, or 0 when the table is full.
+static int64_t keepAnchor(ArAnchor *anchor) {
+    if (!anchor) return 0;
+    if (anchor_count == MAX_ANCHORS) {
+        p_ArAnchor_detach(session, anchor);
+        p_ArAnchor_release(anchor);
+        return 0;
+    }
+    anchors[anchor_count].anchor = anchor;
+    anchors[anchor_count].id = next_id++;
+    return anchors[anchor_count++].id;
+}
+
+static double addJob(int kind, ArFuture *future) {
+    if (!future) return 0;
+    if (job_count == MAX_JOBS) {
+        p_ArFuture_release(future);
+        return 0;
+    }
+    jobs[job_count].id = next_job++;
+    jobs[job_count].kind = kind;
+    jobs[job_count].future = future;
+    return (double)jobs[job_count++].id;
+}
+
+// Hosts the anchor with that id for ttl_days; a job id, 0 when it cannot start.
+double ar_native_cloud_host(double anchor_id, int ttl_days) {
+    pthread_mutex_lock(&session_lock);
+    double job = 0;
+    for (int i = 0; session && (flags & FLAG_CLOUD) && i < anchor_count; i++) {
+        if (anchors[i].id != (int64_t)anchor_id) continue;
+        ArHostCloudAnchorFuture *f = NULL;
+        if (p_ArSession_hostCloudAnchorAsync(session, anchors[i].anchor, ttl_days, NULL, NULL, &f) == AR_SUCCESS_)
+            job = addJob(1, (ArFuture *)f);
+        break;
+    }
+    pthread_mutex_unlock(&session_lock);
+    return job;
+}
+
+// Resolves a cloud anchor id; a job id, 0 when it cannot start.
+double ar_native_cloud_resolve(const char *cloud_id) {
+    pthread_mutex_lock(&session_lock);
+    double job = 0;
+    ArResolveCloudAnchorFuture *f = NULL;
+    if (session && (flags & FLAG_CLOUD) && cloud_id &&
+        p_ArSession_resolveCloudAnchorAsync(session, cloud_id, NULL, NULL, &f) == AR_SUCCESS_)
+        job = addJob(2, (ArFuture *)f);
+    pthread_mutex_unlock(&session_lock);
+    return job;
+}
+
+// An anchor at a place on Earth (WGS84, altitude above the ellipsoid, east-up-south
+// quaternion); its id, 0 when Earth is not tracking.
+double ar_native_earth_anchor(double lat, double lng, double alt, float *quat) {
+    pthread_mutex_lock(&session_lock);
+    double id = 0;
+    ArEarth *earth = NULL;
+    if (session && (flags & FLAG_GEO)) p_ArSession_acquireEarth(session, &earth);
+    if (earth) {
+        ArAnchor *anchor = NULL;
+        if (p_ArEarth_acquireNewAnchor(session, earth, lat, lng, alt, quat, &anchor) == AR_SUCCESS_) id = (double)keepAnchor(anchor);
+        p_ArTrackable_release((ArTrackable *)earth);
+    }
+    pthread_mutex_unlock(&session_lock);
+    return id;
+}
+
+// An anchor at a place on Earth `alt` meters above the terrain (rooftop 0) or a rooftop
+// (rooftop 1); a job id, 0 when it cannot start.
+double ar_native_earth_resolve(int rooftop, double lat, double lng, double alt, float *quat) {
+    pthread_mutex_lock(&session_lock);
+    double job = 0;
+    ArEarth *earth = NULL;
+    if (session && (flags & FLAG_GEO)) p_ArSession_acquireEarth(session, &earth);
+    if (earth) {
+        if (rooftop) {
+            ArResolveAnchorOnRooftopFuture *f = NULL;
+            if (p_ArEarth_resolveAnchorOnRooftopAsync(session, earth, lat, lng, alt, quat, NULL, NULL, &f) == AR_SUCCESS_)
+                job = addJob(4, (ArFuture *)f);
+        } else {
+            ArResolveAnchorOnTerrainFuture *f = NULL;
+            if (p_ArEarth_resolveAnchorOnTerrainAsync(session, earth, lat, lng, alt, quat, NULL, NULL, &f) == AR_SUCCESS_)
+                job = addJob(3, (ArFuture *)f);
+        }
+        p_ArTrackable_release((ArTrackable *)earth);
+    }
+    pthread_mutex_unlock(&session_lock);
+    return job;
+}
+
+// Where a job stands: 0 pending, 1 done (info[1] the anchor's id for a resolve, `text` the
+// cloud anchor id for a host), 2 failed (info[0] ARCore's state for it), 3 no such job. A
+// finished job is reported once.
+int ar_native_job(double job, double *info, char *text, int cap) {
+    pthread_mutex_lock(&session_lock);
+    int result = 3;
+    info[0] = 0;
+    info[1] = 0;
+    if (cap > 0) text[0] = 0;
+    for (int i = 0; session && i < job_count; i++) {
+        if (jobs[i].id != (int64_t)job) continue;
+        Job *j = &jobs[i];
+        ArFutureState fs = AR_FUTURE_STATE_PENDING_;
+        p_ArFuture_getState(session, j->future, &fs);
+        if (fs == AR_FUTURE_STATE_PENDING_) {
+            result = 0;
+            break;
+        }
+        int32_t state = 0;
+        int ok = 0;
+        ArAnchor *anchor = NULL;
+        if (fs == AR_FUTURE_STATE_DONE_) {
+            if (j->kind == 1) {
+                p_ArHostCloudAnchorFuture_getResultCloudAnchorState(session, (ArHostCloudAnchorFuture *)j->future, &state);
+                ok = state == AR_CLOUD_ANCHOR_STATE_SUCCESS_;
+                if (ok) {
+                    char *cloud = NULL;
+                    p_ArHostCloudAnchorFuture_acquireResultCloudAnchorId(session, (ArHostCloudAnchorFuture *)j->future, &cloud);
+                    if (cloud) {
+                        snprintf(text, (size_t)cap, "%s", cloud);
+                        p_ArString_release(cloud);
+                    }
+                }
+            } else if (j->kind == 2) {
+                p_ArResolveCloudAnchorFuture_getResultCloudAnchorState(session, (ArResolveCloudAnchorFuture *)j->future, &state);
+                ok = state == AR_CLOUD_ANCHOR_STATE_SUCCESS_;
+                if (ok) p_ArResolveCloudAnchorFuture_acquireResultAnchor(session, (ArResolveCloudAnchorFuture *)j->future, &anchor);
+            } else if (j->kind == 3) {
+                p_ArResolveAnchorOnTerrainFuture_getResultTerrainAnchorState(session, (ArResolveAnchorOnTerrainFuture *)j->future, &state);
+                ok = state == AR_TERRAIN_ANCHOR_STATE_SUCCESS_;
+                if (ok) p_ArResolveAnchorOnTerrainFuture_acquireResultAnchor(session, (ArResolveAnchorOnTerrainFuture *)j->future, &anchor);
+            } else {
+                p_ArResolveAnchorOnRooftopFuture_getResultRooftopAnchorState(session, (ArResolveAnchorOnRooftopFuture *)j->future, &state);
+                ok = state == AR_ROOFTOP_ANCHOR_STATE_SUCCESS_;
+                if (ok) p_ArResolveAnchorOnRooftopFuture_acquireResultAnchor(session, (ArResolveAnchorOnRooftopFuture *)j->future, &anchor);
+            }
+        }
+        if (anchor) info[1] = (double)keepAnchor(anchor);
+        info[0] = state;
+        result = ok ? 1 : 2;
+        p_ArFuture_release(j->future);
+        jobs[i] = jobs[--job_count];
+        break;
+    }
+    pthread_mutex_unlock(&session_lock);
+    return result;
+}
+
+// The lent frame's Earth values (readEarth's); 0 when it has none.
+int ar_native_earth(double *info) {
+    Snapshot *s = lentSnapshot();
+    if (!s || !s->has_earth) return 0;
+    memcpy(info, s->earth, sizeof(s->earth));
+    return 1;
 }
 
 void ar_native_anchor_remove(double id) {

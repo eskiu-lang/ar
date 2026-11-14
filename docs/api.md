@@ -158,6 +158,8 @@ struct ArOptions {
     bool mesh = false;
     string depth_model;
     int depth_source = ArDepthSourceAuto;
+    bool cloud_anchors = false;
+    bool geospatial = false;
     bool points = false;
     int image_width = 1280;
     int image_height = 720;
@@ -172,7 +174,9 @@ What use_ar_session asks for: plane detection (horizontal, vertical), the light 
 spherical harmonics; iOS ignores it), depth where the device has it (LiDAR on iOS, the
 Depth API on Android) or from `depth_model` (iOS: a CoreML depth model, Depth Anything V2
 metric, run on the picture where there is no LiDAR, or always with `depth_source`), the
-people's depth over it (`people`, iOS), the reconstructed mesh of the surroundings
+people's depth over it (`people`, iOS), ARCore's cloud anchors (`cloud_anchors`) and
+Earth (`geospatial`: frame.earth and anchors at places on Earth) on Android, which need
+the app's Google Cloud API key, the reconstructed mesh of the surroundings
 (`mesh`, LiDAR), the feature points, the size of the camera picture (a wish: the
 platform gives the nearest it has, as the sensor sees it, landscape), and image targets:
 `image_count` pictures at `images` to find (frame.images), of which ARKit follows
@@ -301,6 +305,29 @@ which (an ArLightSource). With ARCore's environmental HDR mode (and WebXR's ligh
 `intensity` is 1.0 and the light is the main light's direction (toward the light) and
 linear RGB intensity, and 9 RGB spherical harmonics coefficients of the ambient light, in
 the platform's order and scale.
+
+### ArEarth
+
+```eskiu
+struct ArEarth {
+    int state;
+    int tracking;
+    double latitude;
+    double longitude;
+    double altitude;
+    double horizontal_accuracy;
+    double vertical_accuracy;
+    float[4] rotation;
+    double yaw_accuracy;
+}
+```
+
+Where the device is on Earth (ArOptions.geospatial, ARCore on Android): whether Earth is
+enabled (`state` 0; ARCore's ArEarthState otherwise: not authorized, resources exhausted...)
+and how well it is tracked, then the camera's geospatial pose once tracking: latitude and
+longitude in degrees (WGS84), altitude in meters above the WGS84 ellipsoid, their
+accuracies in meters, its rotation as an east-up-south quaternion and the yaw's accuracy in
+degrees.
 
 ### ArDepth
 
@@ -433,6 +460,8 @@ struct ArFrame {
     *ArMesh meshes;
     int mesh_count;
     bool has_image;
+    bool has_earth;
+    ArEarth earth;
 }
 ```
 
@@ -467,6 +496,15 @@ const int AR_FLAG_DEPTH_MODEL_ONLY = 1024;
 
 A depth model may fill in the depth (ArOptions.depth_model), and it is used even where a
 sensor measures depth.
+
+### AR_FLAG_CLOUD, AR_FLAG_GEO
+
+```eskiu
+const int AR_FLAG_CLOUD = 2048;
+const int AR_FLAG_GEO = 4096;
+```
+
+ARCore's cloud anchors and Earth (Android).
 
 ### AR_MESH_INFO, AR_FLAG_POINTS, AR_FLAG_LIGHT_HDR, AR_FLAG_IMAGES
 
@@ -629,6 +667,90 @@ void ar_frame_fill(*ArFrame frame, int flags)
 
 Reads the lent frame's planes, anchors, points, light and depth into `frame`, as `flags`
 asked.
+
+### ar_earth_read
+
+```eskiu
+bool ar_earth_read(*double info, *ArEarth out)
+```
+
+The Earth values the native side filled, checked; false when they are not numbers.
+
+### ArJobState
+
+```eskiu
+enum ArJobState { ArJobRunning, ArJobDone, ArJobFailed, ArJobUnknown }
+```
+
+Where a job stands: still running, done, failed (`code` is ARCore's state for it: not
+authorized, not found, hosting failed...), or unknown (no such job, or not supported here).
+
+### ArJob
+
+```eskiu
+struct ArJob {
+    int state;
+    int code;
+    int64 anchor;
+    String cloud_id;
+}
+```
+
+A job's outcome: its state, ARCore's code when it failed, the anchor a resolve made (its id
+in frame.anchors) and the cloud anchor id a host got.
+
+### ar_host_cloud_anchor
+
+```eskiu
+int64 ar_host_cloud_anchor(int64 anchor, int ttl_days)
+```
+
+Hosts an anchor (an id from ar_anchor_add) as a cloud anchor kept ttl_days (1 to 365); a
+job to follow with ar_job, or 0 when it cannot start (no session with cloud_anchors, an
+unknown anchor, or a platform without ARCore's cloud anchors).
+
+### ar_resolve_cloud_anchor
+
+```eskiu
+int64 ar_resolve_cloud_anchor(string cloud_id)
+```
+
+Resolves a cloud anchor id into an anchor of this session; a job, or 0.
+
+### ar_earth_anchor
+
+```eskiu
+int64 ar_earth_anchor(double lat, double lng, double alt, *float rotation)
+```
+
+An anchor at a place on Earth (WGS84 degrees, meters above the ellipsoid, an east-up-south
+quaternion); its id in frame.anchors, or 0 when Earth is not tracking.
+
+### ar_terrain_anchor
+
+```eskiu
+int64 ar_terrain_anchor(double lat, double lng, double height, *float rotation)
+```
+
+An anchor `height` meters above the terrain at a place (ARCore finds the ground's
+altitude); a job, or 0.
+
+### ar_rooftop_anchor
+
+```eskiu
+int64 ar_rooftop_anchor(double lat, double lng, double height, *float rotation)
+```
+
+An anchor `height` meters above a building's rooftop at a place; a job, or 0.
+
+### ar_job
+
+```eskiu
+int ar_job(int64 job, *ArJob out)
+```
+
+Where a job stands into out (its cloud_id freed and filled again); a finished job is told
+once, then it is unknown.
 
 ### ar_tracked_image_read
 

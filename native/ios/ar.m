@@ -833,3 +833,16 @@ void ar_native_anchor_remove(double id) {
     [anchorIds removeObjectForKey:anchor.identifier];
     [session removeAnchor:anchor];
 }
+
+// ARCore's cloud anchors and Earth are not part of ARKit: these say so (ar_job: unknown).
+double ar_native_cloud_host(double anchor, int ttl_days) { return 0; }
+double ar_native_cloud_resolve(const char *cloud_id) { return 0; }
+double ar_native_earth_anchor(double lat, double lng, double alt, float *quaternion) { return 0; }
+double ar_native_earth_resolve(int rooftop, double lat, double lng, double alt, float *quaternion) { return 0; }
+int ar_native_job(double job, double *info, char *text, int capacity) {
+    info[0] = 0;
+    info[1] = 0;
+    if (capacity > 0) text[0] = 0;
+    return 3;
+}
+int ar_native_earth(double *info) { return 0; }

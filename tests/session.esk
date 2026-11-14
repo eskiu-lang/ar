@@ -129,6 +129,41 @@ int ar_native_light(*double info) {
     return 1;
 }
 
+double hosted_anchor;
+int job_polls;
+double ar_native_cloud_host(double anchor, int ttl_days) {
+    hosted_anchor = anchor;
+    return ttl_days > 0 ? 7.0 : 0.0;
+}
+double ar_native_cloud_resolve(string cloud_id) { return 8.0; }
+double ar_native_earth_anchor(double lat, double lng, double alt, *float quaternion) { return quaternion[3] == 1.0 ? 21.0 : 0.0; }
+double ar_native_earth_resolve(int rooftop, double lat, double lng, double alt, *float quaternion) { return rooftop != 0 ? 10.0 : 9.0; }
+int ar_native_job(double job, *double info, *char text, int capacity) {
+    info[0] = 0.0;
+    info[1] = 0.0;
+    text[0] = 0;
+    if (job == 7.0) {
+        job_polls++;
+        if (job_polls == 1) return 0;
+        strcpy(text, "ua-cloud-123");
+        return 1;
+    }
+    if (job == 8.0) {
+        info[1] = 31.0;
+        return 1;
+    }
+    if (job == 9.0) {
+        info[0] = -2.0;
+        return 2;
+    }
+    return 3;
+}
+int ar_native_earth(*double info) {
+    double[14] e = {0.0, 2.0, 19.4326, -99.1332, 2240.0, 1.5, 2.0, 0.0, 0.7071, 0.0, 0.7071, 4.0, 0.0, 0.0};
+    for (i in 0..14) { info[i] = e[i]; }
+    return 1;
+}
+
 String model_sent;
 int models_sent;
 void ar_native_depth_model(string path) {
@@ -545,6 +580,31 @@ void depth_model() {
     check(!depth.estimated, "a sensor's is not");
 }
 
+// ARCore's cloud anchors and Earth: the flags, a host followed until done, a resolve's anchor,
+// a refused terrain anchor, and Earth's values checked into an ArEarth.
+void cloud_and_earth() {
+    int f = ar_flags(ArOptions{cloud_anchors: true, geospatial: true});
+    check((f & AR_FLAG_CLOUD) != 0 && (f & AR_FLAG_GEO) != 0, "cloud and Earth flags");
+    int64 job = ar_host_cloud_anchor(3, 30);
+    check(job == 7 && hosted_anchor == 3.0, "host starts a job");
+    ArJob j;
+    check(ar_job(job, &j) == ArJobRunning, "a job still running");
+    check(ar_job(job, &j) == ArJobDone && j.cloud_id.eq_cstr("ua-cloud-123") == 1, "a host's cloud anchor id");
+    check(ar_job(ar_resolve_cloud_anchor("ua-cloud-123"), &j) == ArJobDone && j.anchor == 31, "a resolve's anchor");
+    float[4] up = {0.0, 0.0, 0.0, 1.0};
+    check(ar_job(ar_terrain_anchor(19.4, -99.1, 1.0, &up[0]), &j) == ArJobFailed && j.code == -2, "a refused terrain anchor");
+    check(ar_rooftop_anchor(19.4, -99.1, 1.0, &up[0]) == 10 && ar_earth_anchor(19.4, -99.1, 2240.0, &up[0]) == 21, "rooftop and Earth anchors");
+    check(ar_job(99, &j) == ArJobUnknown, "an unknown job");
+    j.cloud_id.free();
+    double[14] e;
+    ar_native_earth(&e[0]);
+    ArEarth earth;
+    check(ar_earth_read(&e[0], &earth) && earth.tracking == ArTrackingNormal && earth.latitude == 19.4326 &&
+          earth.altitude == 2240.0 && earth.rotation[1] == (float)0.7071 && earth.yaw_accuracy == 4.0, "Earth's pose");
+    e[3] = 0.0 / 0.0;
+    check(!ar_earth_read(&e[0], &earth), "Earth's values that are not numbers");
+}
+
 void depth_hits() {
     ArFrame f;
     f.camera = ar_mat4_identity();
@@ -584,6 +644,7 @@ int main() {
     hook();
     depth_hits();
     depth_model();
+    cloud_and_earth();
     meshes();
     printf("PASS session\n");
     return 0;

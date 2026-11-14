@@ -43,6 +43,24 @@ typedef int32_t ArTrackableType;
 typedef int32_t ArTrackingFailureReason;
 typedef int32_t ArTrackingState;
 typedef int32_t ArUpdateMode;
+typedef struct ArEarth_ ArEarth;
+typedef struct ArGeospatialPose_ ArGeospatialPose;
+typedef struct ArFuture_ ArFuture;
+typedef struct ArHostCloudAnchorFuture_ ArHostCloudAnchorFuture;
+typedef struct ArResolveCloudAnchorFuture_ ArResolveCloudAnchorFuture;
+typedef struct ArResolveAnchorOnTerrainFuture_ ArResolveAnchorOnTerrainFuture;
+typedef struct ArResolveAnchorOnRooftopFuture_ ArResolveAnchorOnRooftopFuture;
+typedef int32_t ArCloudAnchorMode;
+typedef int32_t ArGeospatialMode;
+typedef int32_t ArFutureState;
+typedef int32_t ArCloudAnchorState;
+typedef int32_t ArEarthState;
+typedef int32_t ArTerrainAnchorState;
+typedef int32_t ArRooftopAnchorState;
+typedef void (*ArHostCloudAnchorCallback)(void *context, char *cloud_anchor_id, ArCloudAnchorState cloud_anchor_state);
+typedef void (*ArResolveCloudAnchorCallback)(void *context, ArAnchor *anchor, ArCloudAnchorState cloud_anchor_state);
+typedef void (*ArResolveAnchorOnTerrainCallback)(void *context, ArAnchor *anchor, ArTerrainAnchorState terrain_anchor_state);
+typedef void (*ArResolveAnchorOnRooftopCallback)(void *context, ArAnchor *anchor, ArRooftopAnchorState rooftop_anchor_state);
 #endif
 
 // The values ar.c uses, as the header defines them.
@@ -70,6 +88,15 @@ enum {
     AR_LIGHT_ESTIMATION_MODE_AMBIENT_INTENSITY_ = 1,
     AR_LIGHT_ESTIMATION_MODE_ENVIRONMENTAL_HDR_ = 2,
     AR_LIGHT_ESTIMATE_STATE_VALID_ = 1,
+    AR_CLOUD_ANCHOR_MODE_ENABLED_ = 1,
+    AR_GEOSPATIAL_MODE_ENABLED_ = 2,
+    AR_FUTURE_STATE_PENDING_ = 0,
+    AR_FUTURE_STATE_CANCELLED_ = 1,
+    AR_FUTURE_STATE_DONE_ = 2,
+    AR_CLOUD_ANCHOR_STATE_SUCCESS_ = 2,
+    AR_TERRAIN_ANCHOR_STATE_SUCCESS_ = 2,
+    AR_ROOFTOP_ANCHOR_STATE_SUCCESS_ = 1,
+    AR_EARTH_STATE_ENABLED_ = 0,
 };
 
 #define AR_API \
@@ -181,6 +208,36 @@ enum {
     X(void, ArAugmentedImage_getExtentX, (const ArSession *session, const ArAugmentedImage *augmented_image, float *out_extent_x)) \
     X(void, ArAugmentedImage_getExtentZ, (const ArSession *session, const ArAugmentedImage *augmented_image, float *out_extent_z)) \
     X(void, ArAugmentedImage_getIndex, (const ArSession *session, const ArAugmentedImage *augmented_image, int32_t *out_index)) \
-    X(void, ArAugmentedImage_getTrackingMethod, (const ArSession *session, const ArAugmentedImage *image, ArAugmentedImageTrackingMethod *out_tracking_method))
+    X(void, ArAugmentedImage_getTrackingMethod, (const ArSession *session, const ArAugmentedImage *image, ArAugmentedImageTrackingMethod *out_tracking_method)) \
+    X(void, ArConfig_setCloudAnchorMode, (const ArSession *session, ArConfig *config, ArCloudAnchorMode cloud_anchor_mode)) \
+    X(void, ArConfig_setGeospatialMode, (const ArSession *session, ArConfig *config, ArGeospatialMode geospatial_mode)) \
+    X(void, ArSession_isGeospatialModeSupported, (const ArSession *session, ArGeospatialMode geospatial_mode, int32_t *out_is_supported)) \
+    X(void, ArFuture_getState, (const ArSession *session, const ArFuture *future, ArFutureState *out_state)) \
+    X(void, ArFuture_release, (ArFuture *future)) \
+    X(void, ArString_release, (char *str)) \
+    X(ArStatus, ArSession_hostCloudAnchorAsync, (ArSession *session, const ArAnchor *anchor, int32_t ttl_days, void *context, ArHostCloudAnchorCallback callback, ArHostCloudAnchorFuture **out_future)) \
+    X(void, ArHostCloudAnchorFuture_acquireResultCloudAnchorId, (const ArSession *session, const ArHostCloudAnchorFuture *future, char **out_cloud_anchor_id)) \
+    X(void, ArHostCloudAnchorFuture_getResultCloudAnchorState, (const ArSession *session, const ArHostCloudAnchorFuture *future, ArCloudAnchorState *out_cloud_anchor_state)) \
+    X(ArStatus, ArSession_resolveCloudAnchorAsync, (ArSession *session, const char *cloud_anchor_id, void *context, ArResolveCloudAnchorCallback callback, ArResolveCloudAnchorFuture **out_future)) \
+    X(void, ArResolveCloudAnchorFuture_acquireResultAnchor, (const ArSession *session, const ArResolveCloudAnchorFuture *future, ArAnchor **out_anchor)) \
+    X(void, ArResolveCloudAnchorFuture_getResultCloudAnchorState, (const ArSession *session, const ArResolveCloudAnchorFuture *future, ArCloudAnchorState *out_cloud_anchor_state)) \
+    X(void, ArSession_acquireEarth, (const ArSession *session, ArEarth **out_earth)) \
+    X(void, ArEarth_getEarthState, (const ArSession *session, const ArEarth *earth, ArEarthState *out_state)) \
+    X(void, ArEarth_getCameraGeospatialPose, (const ArSession *session, const ArEarth *earth, ArGeospatialPose *out_camera_geospatial_pose)) \
+    X(ArStatus, ArEarth_acquireNewAnchor, (ArSession *session, ArEarth *earth, double latitude, double longitude, double altitude, const float *eus_quaternion_4, ArAnchor **out_anchor)) \
+    X(ArStatus, ArEarth_resolveAnchorOnTerrainAsync, (ArSession *session, ArEarth *earth, double latitude, double longitude, double altitude_above_terrain, const float *eus_quaternion_4, void *context, ArResolveAnchorOnTerrainCallback callback, ArResolveAnchorOnTerrainFuture **out_future)) \
+    X(void, ArResolveAnchorOnTerrainFuture_acquireResultAnchor, (const ArSession *session, const ArResolveAnchorOnTerrainFuture *future, ArAnchor **out_anchor)) \
+    X(void, ArResolveAnchorOnTerrainFuture_getResultTerrainAnchorState, (const ArSession *session, const ArResolveAnchorOnTerrainFuture *future, ArTerrainAnchorState *out_terrain_anchor_state)) \
+    X(ArStatus, ArEarth_resolveAnchorOnRooftopAsync, (ArSession *session, ArEarth *earth, double latitude, double longitude, double altitude_above_rooftop, const float *eus_quaternion_4, void *context, ArResolveAnchorOnRooftopCallback callback, ArResolveAnchorOnRooftopFuture **out_future)) \
+    X(void, ArResolveAnchorOnRooftopFuture_acquireResultAnchor, (const ArSession *session, const ArResolveAnchorOnRooftopFuture *future, ArAnchor **out_anchor)) \
+    X(void, ArResolveAnchorOnRooftopFuture_getResultRooftopAnchorState, (const ArSession *session, const ArResolveAnchorOnRooftopFuture *future, ArRooftopAnchorState *out_rooftop_anchor_state)) \
+    X(void, ArGeospatialPose_create, (const ArSession *session, ArGeospatialPose **out_pose)) \
+    X(void, ArGeospatialPose_destroy, (ArGeospatialPose *pose)) \
+    X(void, ArGeospatialPose_getLatitudeLongitude, (const ArSession *session, const ArGeospatialPose *geospatial_pose, double *out_latitude_degrees, double *out_longitude_degrees)) \
+    X(void, ArGeospatialPose_getHorizontalAccuracy, (const ArSession *session, const ArGeospatialPose *geospatial_pose, double *out_horizontal_accuracy_meters)) \
+    X(void, ArGeospatialPose_getAltitude, (const ArSession *session, const ArGeospatialPose *geospatial_pose, double *out_altitude_meters)) \
+    X(void, ArGeospatialPose_getVerticalAccuracy, (const ArSession *session, const ArGeospatialPose *geospatial_pose, double *out_vertical_accuracy_meters)) \
+    X(void, ArGeospatialPose_getEastUpSouthQuaternion, (const ArSession *session, const ArGeospatialPose *geospatial_pose, float *out_quaternion_4)) \
+    X(void, ArGeospatialPose_getOrientationYawAccuracy, (const ArSession *session, const ArGeospatialPose *geospatial_pose, double *out_orientation_yaw_accuracy_degrees))
 
 #endif

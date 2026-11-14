@@ -129,6 +129,12 @@ mergeInto(LibraryManager.library, {
   },
   ar_native_image_state: function(index) { return window.eskiuAr ? window.eskiuAr.imageState(index) : 2; },
   ar_native_depth_model: function(path) {},
+  ar_native_cloud_host: function(anchor, ttl) { return 0; },
+  ar_native_cloud_resolve: function(id) { return 0; },
+  ar_native_earth_anchor: function(lat, lng, alt, q) { return 0; },
+  ar_native_earth_resolve: function(rooftop, lat, lng, alt, q) { return 0; },
+  ar_native_job: function(job, info, text, cap) { return 3; },
+  ar_native_earth: function(info) { return 0; },
   ar_native_mesh_count: function() { return 0; },
   ar_native_mesh: function(index, info) { for (let i = 0; i < 25; i++) HEAPF64[(info >> 3) + i] = 0; },
   ar_native_tracked_image_count: function() {
