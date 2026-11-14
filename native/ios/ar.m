@@ -114,9 +114,14 @@ static void runConfiguration(void) {
     if (sessionFlags & 2) planes |= ARPlaneDetectionVertical;
     config.planeDetection = planes;
     config.lightEstimationEnabled = (sessionFlags & (4 | 32)) != 0;
+    ARFrameSemantics semantics = ARFrameSemanticNone;
     if ((sessionFlags & 8) && [ARWorldTrackingConfiguration supportsFrameSemantics:ARFrameSemanticSceneDepth]) {
-        config.frameSemantics = ARFrameSemanticSceneDepth;
+        semantics |= ARFrameSemanticSceneDepth;
     }
+    if ((sessionFlags & 128) && [ARWorldTrackingConfiguration supportsFrameSemantics:ARFrameSemanticPersonSegmentationWithDepth]) {
+        semantics |= ARFrameSemanticPersonSegmentationWithDepth;
+    }
+    config.frameSemantics = semantics;
     ARVideoFormat *format = videoFormat(sessionWidth, sessionHeight);
     if (format) config.videoFormat = format;
     if (sessionFlags & 64) {
@@ -442,8 +447,54 @@ int ar_native_light(double *info) {
     return 1;
 }
 
+// The depth of the people in the picture (ARKit's person segmentation, 0 where nobody is)
+// merged into the scene depth, nearer wins, or alone without LiDAR: in a buffer of ours.
+static float *peopleDepth;
+static size_t peopleDepthSize;
+
+static int lendPeople(int64_t *info) {
+    CVPixelBufferRef est = lent.estimatedDepthData;
+    if (!est || CVPixelBufferGetPixelFormatType(est) != kCVPixelFormatType_DepthFloat32) return 0;
+    if (CVPixelBufferLockBaseAddress(est, kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess) return 0;
+    size_t ew = CVPixelBufferGetWidth(est), eh = CVPixelBufferGetHeight(est);
+    size_t erow = CVPixelBufferGetBytesPerRow(est);
+    const uint8_t *eb = CVPixelBufferGetBaseAddress(est);
+    CVPixelBufferRef scene = lent.sceneDepth.depthMap;
+    int merge = scene && CVPixelBufferGetPixelFormatType(scene) == kCVPixelFormatType_DepthFloat32 &&
+        CVPixelBufferLockBaseAddress(scene, kCVPixelBufferLock_ReadOnly) == kCVReturnSuccess;
+    size_t w = merge ? CVPixelBufferGetWidth(scene) : ew, h = merge ? CVPixelBufferGetHeight(scene) : eh;
+    if (peopleDepthSize < w * h) {
+        free(peopleDepth);
+        peopleDepth = malloc(w * h * sizeof(float));
+        peopleDepthSize = w * h;
+    }
+    const uint8_t *sb = merge ? CVPixelBufferGetBaseAddress(scene) : NULL;
+    size_t srow = merge ? CVPixelBufferGetBytesPerRow(scene) : 0;
+    for (size_t y = 0; y < h; y++) {
+        const float *er = (const float *)(eb + (y * eh / h) * erow);
+        const float *sr = merge ? (const float *)(sb + y * srow) : NULL;
+        for (size_t x = 0; x < w; x++) {
+            float person = er[x * ew / w];
+            float d = merge ? sr[x] : 0.0f;
+            if (person > 0.0f && (d <= 0.0f || person < d)) d = person;
+            peopleDepth[y * w + x] = d;
+        }
+    }
+    if (merge) CVPixelBufferUnlockBaseAddress(scene, kCVPixelBufferLock_ReadOnly);
+    CVPixelBufferUnlockBaseAddress(est, kCVPixelBufferLock_ReadOnly);
+    info[0] = (int64_t)w;
+    info[1] = (int64_t)h;
+    info[2] = 0;
+    info[3] = (int64_t)(w * sizeof(float));
+    info[4] = (int64_t)(intptr_t)peopleDepth;
+    info[5] = (int64_t)(w * h * sizeof(float));
+    return 1;
+}
+
 int ar_native_depth(int64_t *info) {
     if (!lent) return 0;
+    if ((sessionFlags & 128) && lendPeople(info)) return 1;
+    if (!(sessionFlags & 8)) return 0;
     if (!lentDepth) {
         CVPixelBufferRef depth = lent.sceneDepth.depthMap;
         if (!depth || CVPixelBufferGetPixelFormatType(depth) != kCVPixelFormatType_DepthFloat32 ||

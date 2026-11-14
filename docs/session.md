@@ -30,6 +30,7 @@ void World() {
 | `light` | `true` | The light estimate in `frame.light`. |
 | `light_hdr` | `false` | ARCore's environmental HDR estimate instead (main light and spherical harmonics). iOS treats it as `light`. |
 | `depth` | `false` | A depth image in `frame.depth` where the device has one: LiDAR on iOS (`sceneDepth`), the Depth API on Android. |
+| `people` | `false` | People in the depth image (iOS, A12 and later: ARKit's person segmentation with depth): without LiDAR `frame.depth` holds the people's depth (0 elsewhere), with it the nearer of the two at each pixel, so virtual content goes behind people. Android's Depth API measures people already. |
 | `points` | `false` | The feature points in `frame.points`. |
 | `image_width`, `image_height` | 1280, 720 | The camera picture's size, a wish as the sensor sees it (landscape). iOS picks the smallest video format that holds it, Android the smallest CPU image config; both fall back to the largest. The web scales its picture (with raw camera access) to fit the longer side. |
 | `images`, `image_count` | none | Pictures to find in the world ([image targets](images.md)). |

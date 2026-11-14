@@ -7,6 +7,9 @@ All notable changes to this package are documented in this file. The format is b
 
 ### Added
 
+- `ArOptions.people`: the depth of the people in the picture in `frame.depth` (ARKit's
+  person segmentation with depth, merged with LiDAR's scene depth where there is one), for
+  occlusion by people.
 - `ArPlane.classification` (`ArPlaneClass`): floor, table, wall, ceiling, seat, window or
   door, from ARKit's plane classification and WebXR's semantic labels (ARCore does not
   classify).

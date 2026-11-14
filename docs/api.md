@@ -137,6 +137,7 @@ struct ArOptions {
     bool light = true;
     bool light_hdr = false;
     bool depth = false;
+    bool people = false;
     bool points = false;
     int image_width = 1280;
     int image_height = 720;
@@ -370,13 +371,14 @@ and available. `has_image` is false where the platform gives no camera picture (
 without WebXR raw camera access, where the browser draws the camera itself): `image` is
 then empty, with no planes, and only its size and rotation are set (the viewport's).
 
-### AR_FLAG_HORIZONTAL, AR_FLAG_VERTICAL, AR_FLAG_LIGHT, AR_FLAG_DEPTH, AR_FLAG_POINTS, AR_FLAG_LIGHT_HDR, AR_FLAG_IMAGES
+### AR_FLAG_HORIZONTAL, AR_FLAG_VERTICAL, AR_FLAG_LIGHT, AR_FLAG_DEPTH, AR_FLAG_PEOPLE, AR_FLAG_POINTS, AR_FLAG_LIGHT_HDR, AR_FLAG_IMAGES
 
 ```eskiu
 const int AR_FLAG_HORIZONTAL = 1;
 const int AR_FLAG_VERTICAL = 2;
 const int AR_FLAG_LIGHT = 4;
 const int AR_FLAG_DEPTH = 8;
+const int AR_FLAG_PEOPLE = 128;
 const int AR_FLAG_POINTS = 16;
 const int AR_FLAG_LIGHT_HDR = 32;
 const int AR_FLAG_IMAGES = 64;
