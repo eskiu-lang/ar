@@ -821,6 +821,7 @@ int ar_native_plane(int index, double *info, float *polygon, int max_points) {
     Snapshot *s = lentSnapshot();
     if (!s || index < 0 || index >= s->plane_count) return -1;
     memcpy(info, s->planes[index], sizeof(double) * 22);
+    info[22] = 0;    // ARCore does not classify planes
     int n = s->polygon_counts[index];
     if (n > max_points) n = max_points;
     memcpy(polygon, s->polygons[index], sizeof(float) * 2 * (size_t)n);

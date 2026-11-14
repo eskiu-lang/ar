@@ -65,7 +65,7 @@ last one.
 | `camera` | The camera's pose, camera to world, x right and y up along the picture as the sensor gives it. `ArFrame_view` turns it for the screen. |
 | `intrinsics` | The picture's focal lengths and principal point in pixels, and its size. |
 | `tracking`, `reason` | `ArTrackingNormal`, `ArTrackingLimited` (with an `ArReason`) or `ArTrackingNone` (the pose means nothing). |
-| `planes`, `plane_count` | `ArPlane`s: `id`, `alignment` (`ArHorizontalUp`, `ArHorizontalDown`, `ArVertical`), `tracking`, `pose` (the center, y along the normal), `extent_x`, `extent_z`, the outline `polygon` (x, z about the center), `subsumed_by` (Android: the plane that took this one over). |
+| `planes`, `plane_count` | `ArPlane`s: `id`, `alignment` (`ArHorizontalUp`, `ArHorizontalDown`, `ArVertical`), `tracking`, `pose` (the center, y along the normal), `extent_x`, `extent_z`, the outline `polygon` (x, z about the center), `subsumed_by` (Android: the plane that took this one over), `classification` (an `ArPlaneClass`: `ArPlaneFloor`, `ArPlaneTable`, `ArPlaneWall`, `ArPlaneCeiling`, `ArPlaneSeat`, `ArPlaneWindow`, `ArPlaneDoor`, or `ArPlaneNone`; iOS classifies, Android does not, the web where the browser labels planes). |
 | `anchors`, `anchor_count` | The app's anchors with their current poses. |
 | `points`, `point_count` | Feature points (`position`, `confidence`; 1 on iOS). |
 | `light` | `ArLight`: `valid`, `intensity` (linear, 1.0 is a neutral scene; see [Light](#light)), `temperature` (kelvin, iOS), `color` (a linear tint), `raw_intensity` and `source` (the platform's own value and where it came from), and with `light_hdr` on Android the main light and 9 RGB spherical harmonics. |

@@ -267,13 +267,16 @@ export function setup(ui) {
       const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
       const m = Array.from(pose.transform.matrix);
       const center = multiply(m, [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, cx, 0, cz, 1]);
-      const info = new Array(22).fill(0);
+      const info = new Array(23).fill(0);
       info[0] = state.planeIds.get(plane);
       info[1] = vertical ? 2 : m[5] < 0 ? 1 : 0;
       info[2] = pose.emulatedPosition ? 1 : 2;
       for (let i = 0; i < 16; i++) info[3 + i] = center[i];
       info[19] = maxX - minX;
       info[20] = maxZ - minZ;
+      // WebXR's semantic label, where the browser gives one, as an ArPlaneClass
+      const labels = { wall: 1, floor: 2, ceiling: 3, table: 4, desk: 4, couch: 5, seat: 5, window: 6, door: 7 };
+      info[22] = labels[plane.semanticLabel] || 0;
       const polygon = new Float32Array(Math.min(plane.polygon.length, 256) * 2);
       for (let i = 0; i < polygon.length / 2; i++) {
         polygon[i * 2] = plane.polygon[i].x - cx;

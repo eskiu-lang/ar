@@ -352,7 +352,7 @@ static int64_t planeId(NSUUID *identifier) {
 int ar_native_plane(int index, double *info, float *polygon, int max_points) {
     if (index < 0 || index >= (int)lentPlanes.count) return -1;
     ARPlaneAnchor *plane = lentPlanes[index];
-    for (int i = 0; i < 22; i++) info[i] = 0;
+    for (int i = 0; i < 23; i++) info[i] = 0;
     info[0] = (double)planeId(plane.identifier);
     int alignment = plane.alignment == ARPlaneAnchorAlignmentVertical ? 2 : 0;
     if (alignment == 0 && ARPlaneAnchor.classificationSupported && plane.classification == ARPlaneClassificationCeiling) alignment = 1;
@@ -364,6 +364,8 @@ int ar_native_plane(int index, double *info, float *polygon, int max_points) {
     putMatrix(&info[3], pose);
     info[19] = plane.extent.x;
     info[20] = plane.extent.z;
+    // ARPlaneClassification's values are ArPlaneClass's
+    if (ARPlaneAnchor.classificationSupported) info[22] = (double)plane.classification;
     ARPlaneGeometry *geometry = plane.geometry;
     int n = (int)geometry.boundaryVertexCount;
     if (n > max_points) n = max_points;

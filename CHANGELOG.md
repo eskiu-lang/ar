@@ -3,6 +3,14 @@
 All notable changes to this package are documented in this file. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- `ArPlane.classification` (`ArPlaneClass`): floor, table, wall, ceiling, seat, window or
+  door, from ARKit's plane classification and WebXR's semantic labels (ARCore does not
+  classify).
+
 ## [0.1.0] - 2026-11-07
 
 ### Added

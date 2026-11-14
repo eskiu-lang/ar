@@ -126,7 +126,9 @@ struct ArCameraImage {
 // A detected plane: an id that stays the same while it is tracked, its alignment, how well
 // it is tracked, its center pose (y along the plane's normal), its size along the pose's x
 // and z, its outline (`polygon_count` points in the pose's x-z plane, borrowed for the
-// handler's call), and the id of the plane that took it over (0 while it stands alone).
+// handler's call), the id of the plane that took it over (0 while it stands alone), and
+// what it is (an ArPlaneClass: floor, table, wall...; ARKit classifies, ARCore does not, and
+// WebXR does where the browser labels planes).
 struct ArPlane {
     int64 id;
     int alignment;
@@ -137,7 +139,12 @@ struct ArPlane {
     *ArVec2 polygon;
     int polygon_count;
     int64 subsumed_by;
+    int classification;
 }
+
+// What a plane is (ArPlane.classification), ARKit's ARPlaneClassification: not known, a wall,
+// the floor, the ceiling, a table, a seat, a window or a door.
+enum ArPlaneClass { ArPlaneNone, ArPlaneWall, ArPlaneFloor, ArPlaneCeiling, ArPlaneTable, ArPlaneSeat, ArPlaneWindow, ArPlaneDoor }
 
 // An anchor the app added: its id, how well it is tracked, and its pose, which the session
 // updates as it learns more about the world.
@@ -288,7 +295,7 @@ const int AR_CAMERA_INFO = 24;
 
 // A plane: id, alignment, tracking, the center pose's 16 values, extent x and z, subsumed
 // by.
-const int AR_PLANE_INFO = 22;
+const int AR_PLANE_INFO = 23;
 
 // An anchor: id, tracking, the pose's 16 values.
 const int AR_ANCHOR_INFO = 18;
@@ -468,6 +475,8 @@ void ar_frame_fill(*ArFrame frame, int flags) {
             plane.extent_x = (float)values[19];
             plane.extent_z = (float)values[20];
             plane.subsumed_by = (int64)values[21];
+            plane.classification = (int)values[22];
+            if (plane.classification < ArPlaneNone || plane.classification > ArPlaneDoor) { plane.classification = ArPlaneNone; }
             if (plane.alignment < ArHorizontalUp || plane.alignment > ArVertical) { plane.alignment = ArHorizontalUp; }
             if (!ar_mat4_finite(plane.pose)) { continue; }
             plane.polygon_count = n;

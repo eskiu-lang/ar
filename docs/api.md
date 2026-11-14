@@ -202,13 +202,25 @@ struct ArPlane {
     *ArVec2 polygon;
     int polygon_count;
     int64 subsumed_by;
+    int classification;
 }
 ```
 
 A detected plane: an id that stays the same while it is tracked, its alignment, how well
 it is tracked, its center pose (y along the plane's normal), its size along the pose's x
 and z, its outline (`polygon_count` points in the pose's x-z plane, borrowed for the
-handler's call), and the id of the plane that took it over (0 while it stands alone).
+handler's call), the id of the plane that took it over (0 while it stands alone), and
+what it is (an ArPlaneClass: floor, table, wall...; ARKit classifies, ARCore does not, and
+WebXR does where the browser labels planes).
+
+### ArPlaneClass
+
+```eskiu
+enum ArPlaneClass { ArPlaneNone, ArPlaneWall, ArPlaneFloor, ArPlaneCeiling, ArPlaneTable, ArPlaneSeat, ArPlaneWindow, ArPlaneDoor }
+```
+
+What a plane is (ArPlane.classification), ARKit's ARPlaneClassification: not known, a wall,
+the floor, the ceiling, a table, a seat, a window or a door.
 
 ### ArAnchor
 
@@ -394,7 +406,7 @@ cx, cy, and the intrinsics' image width and height.
 ### AR_PLANE_INFO
 
 ```eskiu
-const int AR_PLANE_INFO = 22;
+const int AR_PLANE_INFO = 23;
 ```
 
 A plane: id, alignment, tracking, the center pose's 16 values, extent x and z, subsumed
