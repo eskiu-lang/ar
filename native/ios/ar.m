@@ -14,6 +14,28 @@ static int64_t planeId(NSUUID *identifier);
 #import <CoreML/CoreML.h>
 #import <Vision/Vision.h>
 #import <stdatomic.h>
+
+// ARCore for iOS (Google's Swift package: ARCoreGARSession, ARCoreCloudAnchors,
+// ARCoreGeospatial, ARCoreSemantics), used when the app adds it ([ios.spm] in its ui.toml)
+// for cloud anchors, Earth and scene semantics, as on Android. Without it those calls say
+// they have nothing.
+#if __has_include(<ARCoreGARSession/ARCoreGARSession.h>)
+#import <ARCoreGARSession/ARCoreGARSession.h>
+#define ESKIU_ARCORE 1
+#if __has_include(<ARCoreCloudAnchors/ARCoreCloudAnchors.h>)
+#import <ARCoreCloudAnchors/ARCoreCloudAnchors.h>
+#define ESKIU_ARCORE_CLOUD 1
+#endif
+#if __has_include(<ARCoreGeospatial/ARCoreGeospatial.h>)
+#import <ARCoreGeospatial/ARCoreGeospatial.h>
+#import <CoreLocation/CoreLocation.h>
+#define ESKIU_ARCORE_GEO 1
+#endif
+#if __has_include(<ARCoreSemantics/ARCoreSemantics.h>)
+#import <ARCoreSemantics/ARCoreSemantics.h>
+#define ESKIU_ARCORE_SEMANTICS 1
+#endif
+#endif
 #import "ui_native.h"
 
 static void emit(const char *status) { ui_native_emit("ar", status); }
@@ -57,10 +79,23 @@ static NSMutableDictionary<NSNumber *, ARAnchor *> *anchorsById;
 static NSMutableDictionary<NSUUID *, NSNumber *> *imageIds;
 static int64_t nextId = 1;
 
+#ifdef ESKIU_ARCORE
+static GARSession *gar;
+static GARFrame *garLatest;
+static GARFrame *garLent;
+static void garConfigure(int flags);
+#endif
+
 @implementation EskiuArDelegate
 - (void)session:(ARSession *)arSession didUpdateFrame:(ARFrame *)frame {
+#ifdef ESKIU_ARCORE
+    GARFrame *g = gar ? [gar update:frame error:nil] : nil;
+#endif
     os_unfair_lock_lock(&frameLock);
     latest = frame;
+#ifdef ESKIU_ARCORE
+    garLatest = g;
+#endif
     bool post = !posted;
     posted = true;
     os_unfair_lock_unlock(&frameLock);
@@ -184,6 +219,9 @@ void ar_native_session(int on, int flags, int width, int height) {
         imageIds = [NSMutableDictionary new];
     }
     sessionFlags = flags;
+#ifdef ESKIU_ARCORE
+    garConfigure(flags);
+#endif
     sessionWidth = width;
     sessionHeight = height;
     // Run on the next turn of the main queue, once the UI update that started the session is
@@ -285,6 +323,9 @@ int ar_native_frame_acquire(int64_t *image, double *camera) {
     os_unfair_lock_lock(&frameLock);
     ARFrame *frame = latest;
     posted = false;
+#ifdef ESKIU_ARCORE
+    garLent = garLatest;
+#endif
     os_unfair_lock_unlock(&frameLock);
     if (!frame) return 0;
     CVPixelBufferRef buffer = frame.capturedImage;
@@ -355,6 +396,9 @@ void ar_native_frame_release(void) {
         lentDepth = NULL;
     }
     lent = nil;
+#ifdef ESKIU_ARCORE
+    garLent = nil;
+#endif
     lentPlanes = nil;
     lentAnchors = nil;
     lentImages = nil;
@@ -429,11 +473,18 @@ int ar_native_plane(int index, double *info, float *polygon, int max_points) {
 }
 #pragma clang diagnostic pop
 
-int ar_native_anchor_count(void) { return (int)lentAnchors.count; }
+static int garAnchorCount(void);
+static void garAnchor(int index, double *info);
+
+int ar_native_anchor_count(void) { return (int)lentAnchors.count + garAnchorCount(); }
 
 void ar_native_anchor(int index, double *info) {
     for (int i = 0; i < 18; i++) info[i] = 0;
-    if (index < 0 || index >= (int)lentAnchors.count) return;
+    if (index >= (int)lentAnchors.count) {
+        garAnchor(index - (int)lentAnchors.count, info);
+        return;
+    }
+    if (index < 0) return;
     ARAnchor *anchor = lentAnchors[index];
     info[0] = (double)anchorIds[anchor.identifier].longLongValue;
     info[1] = trackingOf(lent.camera);
@@ -834,17 +885,281 @@ void ar_native_anchor_remove(double id) {
     [session removeAnchor:anchor];
 }
 
-// ARCore's cloud anchors and Earth are not part of ARKit: these say so (ar_job: unknown).
-double ar_native_cloud_host(double anchor, int ttl_days) { return 0; }
-double ar_native_cloud_resolve(const char *cloud_id) { return 0; }
-double ar_native_earth_anchor(double lat, double lng, double alt, float *quaternion) { return 0; }
-double ar_native_earth_resolve(int rooftop, double lat, double lng, double alt, float *quaternion) { return 0; }
+// --- ARCore for iOS: cloud anchors, Earth and semantics ---
+
+#ifdef ESKIU_ARCORE
+// The anchors ARCore made (resolved, on Earth), by their identifier, with the ids Eskiu sees.
+static NSMutableDictionary<NSUUID *, NSNumber *> *garIds;
+static NSMutableDictionary<NSNumber *, GARAnchor *> *garById;
+// Jobs: id to @[state, code, anchor id, cloud id] (state 0 running, 1 done, 2 failed).
+static NSMutableDictionary<NSNumber *, NSMutableArray *> *jobs;
+static int64_t nextJob = 1;
+static uint8_t *semanticCopy;
+static size_t semanticCap;
+#ifdef ESKIU_ARCORE_GEO
+static CLLocationManager *location;
+#endif
+
+// Makes the ARCore session for the flags asked for (2048 cloud anchors, 4096 Earth, 8192
+// semantics) with the app's API key (GARAPIKey in Info.plist), or drops it.
+static void garConfigure(int flags) {
+    if (!(flags & (2048 | 4096 | 8192))) {
+        gar = nil;
+        return;
+    }
+    if (!garIds) {
+        garIds = [NSMutableDictionary new];
+        garById = [NSMutableDictionary new];
+        jobs = [NSMutableDictionary new];
+    }
+    if (!gar) {
+        NSString *key = [NSBundle.mainBundle objectForInfoDictionaryKey:@"GARAPIKey"];
+        NSError *error = nil;
+        gar = key.length ? [GARSession sessionWithAPIKey:key bundleIdentifier:nil error:&error] : nil;
+        if (!gar) {
+            NSLog(@"ar: no ARCore session (%@)", key.length ? error.localizedDescription : @"GARAPIKey missing from Info.plist");
+            return;
+        }
+    }
+    GARSessionConfiguration *config = [GARSessionConfiguration new];
+#ifdef ESKIU_ARCORE_CLOUD
+    if (flags & 2048) config.cloudAnchorMode = GARCloudAnchorModeEnabled;
+#endif
+#ifdef ESKIU_ARCORE_GEO
+    if ((flags & 4096) && [gar isGeospatialModeSupported:GARGeospatialModeEnabled]) {
+        config.geospatialMode = GARGeospatialModeEnabled;
+        if (!location) location = [CLLocationManager new];
+        [location requestWhenInUseAuthorization];
+    }
+#endif
+#ifdef ESKIU_ARCORE_SEMANTICS
+    if ((flags & 8192) && [gar isSemanticModeSupported:GARSemanticModeEnabled]) config.semanticMode = GARSemanticModeEnabled;
+#endif
+    NSError *error = nil;
+    [gar setConfiguration:config error:&error];
+    if (error) NSLog(@"ar: ARCore refused the configuration (%@)", error.localizedDescription);
+}
+
+static double newJob(void) {
+    NSNumber *id = @(nextJob++);
+    @synchronized(jobs) {
+        jobs[id] = [@[ @0, @0, @0, @"" ] mutableCopy];
+    }
+    return id.doubleValue;
+}
+
+static void finishJob(double job, BOOL ok, NSInteger code, GARAnchor *anchor, NSString *cloud) {
+    NSNumber *anchorId = @0;
+    if (anchor) {
+        anchorId = @(nextId++);
+        @synchronized(garIds) {
+            garIds[anchor.identifier] = anchorId;
+            garById[anchorId] = anchor;
+        }
+    }
+    @synchronized(jobs) {
+        NSMutableArray *j = jobs[@((int64_t)job)];
+        if (!j) return;
+        j[0] = ok ? @1 : @2;
+        j[1] = @(code);
+        j[2] = anchorId;
+        j[3] = cloud ?: @"";
+    }
+}
+
+static simd_quatf quatOf(float *q) { return simd_quaternion(q[0], q[1], q[2], q[3]); }
+
+static int garAnchorCount(void) {
+    if (!garLent) return 0;
+    int n = 0;
+    @synchronized(garIds) {
+        for (GARAnchor *a in garLent.anchors) if (garIds[a.identifier]) n++;
+    }
+    return n;
+}
+
+static void garAnchor(int index, double *info) {
+    if (!garLent || index < 0) return;
+    int n = 0;
+    @synchronized(garIds) {
+        for (GARAnchor *a in garLent.anchors) {
+            NSNumber *id = garIds[a.identifier];
+            if (!id) continue;
+            if (n++ != index) continue;
+            info[0] = id.doubleValue;
+            info[1] = a.trackingState == GARTrackingStateTracking ? 2 : a.trackingState == GARTrackingStatePaused ? 1 : 0;
+            putMatrix(&info[2], a.transform);
+            return;
+        }
+    }
+}
+#else
+static int garAnchorCount(void) { return 0; }
+static void garAnchor(int index, double *info) {}
+#endif
+
+double ar_native_cloud_host(double anchor, int ttl_days) {
+#ifdef ESKIU_ARCORE_CLOUD
+    ARAnchor *a = anchorsById[@((int64_t)anchor)];
+    if (!gar || !a) return 0;
+    double job = newJob();
+    NSError *error = nil;
+    GARHostCloudAnchorFuture *f = [gar hostCloudAnchor:a TTLDays:ttl_days completionHandler:^(NSString *cloud, GARCloudAnchorState state) {
+        finishJob(job, state == GARCloudAnchorStateSuccess, state, nil, cloud);
+    } error:&error];
+    if (!f) finishJob(job, NO, error.code, nil, nil);
+    return job;
+#else
+    return 0;
+#endif
+}
+
+double ar_native_cloud_resolve(const char *cloud_id) {
+#ifdef ESKIU_ARCORE_CLOUD
+    if (!gar || !cloud_id) return 0;
+    double job = newJob();
+    NSError *error = nil;
+    GARResolveCloudAnchorFuture *f = [gar resolveCloudAnchorWithIdentifier:[NSString stringWithUTF8String:cloud_id]
+        completionHandler:^(GARAnchor *a, GARCloudAnchorState state) {
+            finishJob(job, state == GARCloudAnchorStateSuccess && a, state, a, nil);
+        } error:&error];
+    if (!f) finishJob(job, NO, error.code, nil, nil);
+    return job;
+#else
+    return 0;
+#endif
+}
+
+double ar_native_earth_anchor(double lat, double lng, double alt, float *quaternion) {
+#ifdef ESKIU_ARCORE_GEO
+    if (!gar) return 0;
+    GARAnchor *a = [gar createAnchorWithCoordinate:CLLocationCoordinate2DMake(lat, lng) altitude:alt
+                                eastUpSouthQAnchor:quatOf(quaternion) error:nil];
+    if (!a) return 0;
+    NSNumber *id = @(nextId++);
+    @synchronized(garIds) {
+        garIds[a.identifier] = id;
+        garById[id] = a;
+    }
+    return id.doubleValue;
+#else
+    return 0;
+#endif
+}
+
+double ar_native_earth_resolve(int rooftop, double lat, double lng, double alt, float *quaternion) {
+#ifdef ESKIU_ARCORE_GEO
+    if (!gar) return 0;
+    double job = newJob();
+    NSError *error = nil;
+    CLLocationCoordinate2D at = CLLocationCoordinate2DMake(lat, lng);
+    id f;
+    if (rooftop) {
+        f = [gar createAnchorWithCoordinate:at altitudeAboveRooftop:alt eastUpSouthQAnchor:quatOf(quaternion)
+            completionHandler:^(GARAnchor *a, GARRooftopAnchorState state) {
+                finishJob(job, state == GARRooftopAnchorStateSuccess && a, state, a, nil);
+            } error:&error];
+    } else {
+        f = [gar createAnchorWithCoordinate:at altitudeAboveTerrain:alt eastUpSouthQAnchor:quatOf(quaternion)
+            completionHandler:^(GARAnchor *a, GARTerrainAnchorState state) {
+                finishJob(job, state == GARTerrainAnchorStateSuccess && a, state, a, nil);
+            } error:&error];
+    }
+    if (!f) finishJob(job, NO, error.code, nil, nil);
+    return job;
+#else
+    return 0;
+#endif
+}
+
+double ar_native_vps_check(double lat, double lng) {
+#ifdef ESKIU_ARCORE_GEO
+    if (!gar) return 0;
+    double job = newJob();
+    [gar checkVPSAvailabilityAtCoordinate:CLLocationCoordinate2DMake(lat, lng) completionHandler:^(GARVPSAvailability v) {
+        finishJob(job, v == GARVPSAvailabilityAvailable, v, nil, nil);
+    }];
+    return job;
+#else
+    return 0;
+#endif
+}
+
 int ar_native_job(double job, double *info, char *text, int capacity) {
     info[0] = 0;
     info[1] = 0;
     if (capacity > 0) text[0] = 0;
+#ifdef ESKIU_ARCORE
+    if (!jobs) return 3;
+    @synchronized(jobs) {
+        NSMutableArray *j = jobs[@((int64_t)job)];
+        if (!j) return 3;
+        int state = [j[0] intValue];
+        if (state == 0) return 0;
+        info[0] = [j[1] doubleValue];
+        info[1] = [j[2] doubleValue];
+        if (capacity > 0) snprintf(text, (size_t)capacity, "%s", [(NSString *)j[3] UTF8String]);
+        [jobs removeObjectForKey:@((int64_t)job)];
+        return state;
+    }
+#else
     return 3;
+#endif
 }
-int ar_native_earth(double *info) { return 0; }
-int ar_native_semantics(int64_t *info) { return 0; }
-double ar_native_vps_check(double lat, double lng) { return 0; }
+
+int ar_native_earth(double *info) {
+#ifdef ESKIU_ARCORE_GEO
+    GAREarth *earth = garLent.earth;
+    if (!earth) return 0;
+    for (int i = 0; i < 14; i++) info[i] = 0;
+    info[0] = earth.earthState;
+    info[1] = earth.trackingState == GARTrackingStateTracking ? 2 : earth.trackingState == GARTrackingStatePaused ? 1 : 0;
+    GARGeospatialTransform *t = earth.cameraGeospatialTransform;
+    if (t && earth.trackingState == GARTrackingStateTracking) {
+        info[2] = t.coordinate.latitude;
+        info[3] = t.coordinate.longitude;
+        info[4] = t.altitude;
+        info[5] = t.horizontalAccuracy;
+        info[6] = t.verticalAccuracy;
+        simd_quatf q = t.eastUpSouthQTarget;
+        for (int k = 0; k < 4; k++) info[7 + k] = q.vector[k];
+        info[11] = t.orientationYawAccuracy;
+    }
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+int ar_native_semantics(int64_t *info) {
+#ifdef ESKIU_ARCORE_SEMANTICS
+    CVPixelBufferRef labels = garLent.semanticImage;
+    if (!labels || CVPixelBufferLockBaseAddress(labels, kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess) return 0;
+    size_t w = CVPixelBufferGetWidth(labels), h = CVPixelBufferGetHeight(labels), row = CVPixelBufferGetBytesPerRow(labels);
+    if (semanticCap < w * h * 2) {
+        free(semanticCopy);
+        semanticCopy = malloc(w * h * 2);
+        semanticCap = w * h * 2;
+    }
+    const uint8_t *src = CVPixelBufferGetBaseAddress(labels);
+    for (size_t y = 0; y < h; y++) memcpy(semanticCopy + y * w, src + y * row, w);
+    CVPixelBufferUnlockBaseAddress(labels, kCVPixelBufferLock_ReadOnly);
+    int has_confidence = 0;
+    CVPixelBufferRef conf = garLent.semanticConfidenceImage;
+    if (conf && CVPixelBufferGetWidth(conf) == w && CVPixelBufferGetHeight(conf) == h &&
+        CVPixelBufferLockBaseAddress(conf, kCVPixelBufferLock_ReadOnly) == kCVReturnSuccess) {
+        const uint8_t *c = CVPixelBufferGetBaseAddress(conf);
+        size_t crow = CVPixelBufferGetBytesPerRow(conf);
+        for (size_t y = 0; y < h; y++) memcpy(semanticCopy + w * h + y * w, c + y * crow, w);
+        CVPixelBufferUnlockBaseAddress(conf, kCVPixelBufferLock_ReadOnly);
+        has_confidence = 1;
+    }
+    info[0] = (int64_t)w;
+    info[1] = (int64_t)h;
+    info[2] = (int64_t)(intptr_t)semanticCopy;
+    info[3] = has_confidence ? (int64_t)(intptr_t)(semanticCopy + w * h) : 0;
+    return 1;
+#else
+    return 0;
+#endif
+}

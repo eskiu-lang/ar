@@ -1,11 +1,13 @@
 # Cloud anchors, Earth and semantics
 
-On Android, `ar` reaches ARCore's cloud anchors and its Geospatial API, as ViroReact's
-`hostCloudAnchor`, `resolveCloudAnchor` and geospatial anchors do with ARCore. ARKit has
-neither, so on iOS the calls start nothing and a job reads `ArJobUnknown`; for anchors shared
-across platforms use ReactVision's cloud anchors (the `spatial` package).
+`ar` reaches ARCore's cloud anchors, its Geospatial API and its scene semantics, as
+ViroReact's `hostCloudAnchor`, `resolveCloudAnchor`, geospatial anchors and semantics do:
+through ARCore itself on Android, and on iOS through Google's ARCore SDK for iOS running
+beside ARKit (a `GARSession` fed each ARKit frame), when the app adds it. Without it the iOS
+calls start nothing and a job reads `ArJobUnknown`.
 
-Both need the app's Google Cloud API key with the ARCore API enabled, in the manifest:
+All of it needs the app's Google Cloud API key with the ARCore API enabled. On Android, in the
+manifest:
 
 ```toml
 [android.meta_data]
@@ -13,6 +15,20 @@ Both need the app's Google Cloud API key with the ARCore API enabled, in the man
 ```
 
 and Earth also needs the location permission (`android.permission.ACCESS_FINE_LOCATION`).
+On iOS, the SDK's Swift package (the products for what the app uses) and the key in
+Info.plist as `GARAPIKey`; Earth asks for the location when in use:
+
+```toml
+[ios.spm]
+ARCore = { url = "https://github.com/google-ar/arcore-ios-sdk", exact = "1.57.1", products = ["ARCoreCloudAnchors", "ARCoreGeospatial", "ARCoreSemantics"] }
+
+[ios.plist]
+GARAPIKey = "AIza..."
+NSLocationWhenInUseUsageDescription = "Places content where it belongs in the world"
+```
+
+(1.57.1, not 1.57.0: the 1.57.0 manifest's checksums do not match Google's downloads. The SDK
+brings Firebase and adds about 40 MB to an app.)
 
 ## Cloud anchors
 
@@ -51,7 +67,7 @@ coverage or a good GPS fix.
 
 ## Scene semantics
 
-With `semantics` (Android, ARCore's Scene Semantics, for outdoor scenes), each frame has
+With `semantics` (ARCore's Scene Semantics, for outdoor scenes), each frame has
 `semantics`: an image aligned with the camera picture, one `ArSemanticLabel` per pixel (sky,
 building, tree, road, sidewalk, terrain, structure, object, vehicle, person, water) and its
 confidence. `ArSemantics_label(x, y)` reads one, `ArSemantics_fraction(label)` is the share of

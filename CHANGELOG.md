@@ -7,6 +7,9 @@ All notable changes to this package are documented in this file. The format is b
 
 ### Added
 
+- ARCore on iOS: with Google's ARCore SDK for iOS in the app ([ios.spm]) and `GARAPIKey`,
+  cloud anchors, Earth, terrain and rooftop anchors, VPS availability and scene semantics
+  work on iOS as on Android (a GARSession fed each ARKit frame).
 - ARCore's scene semantics on Android: `ArOptions.semantics`, `frame.semantics`
   (`ArSemantics`: a label and a confidence per pixel), `ArSemantics_label`,
   `ArSemantics_fraction`.
