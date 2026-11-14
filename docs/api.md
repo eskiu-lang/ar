@@ -146,6 +146,7 @@ struct ArOptions {
     bool light_hdr = false;
     bool depth = false;
     bool people = false;
+    bool mesh = false;
     bool points = false;
     int image_width = 1280;
     int image_height = 720;
@@ -347,6 +348,62 @@ it is tracked (an ArTracking) and how (an ArImageMethod), the pose of its center
 picture's right, z toward its bottom, y out of its face) and its size in meters along x
 and z, as the platform estimates it.
 
+### ArMesh
+
+```eskiu
+struct ArMesh {
+    int64 id;
+    ArMat4 pose;
+    *uint8 vertices;
+    int vertex_count;
+    int vertex_stride;
+    *uint8 normals;
+    int normal_stride;
+    *uint8 faces;
+    int face_count;
+    int index_bytes;
+}
+```
+
+A frame of the session, borrowed for the handler's call. `image` is the camera picture.
+`camera` is the camera's pose (camera to world, axes along the picture as the sensor gives
+it), `intrinsics` the picture's, `tracking` and `reason` how well it is tracked. Planes,
+anchors, image targets found and points are arrays of `*_count` items (planes, images and
+points only when the options asked for them); `light` and `depth` are set when asked for
+and available. `has_image` is false where the platform gives no camera picture (the web
+without WebXR raw camera access, where the browser draws the camera itself): `image` is
+then empty, with no planes, and only its size and rotation are set (the viewport's).
+A piece of the world's mesh (LiDAR scene reconstruction on iOS, ArOptions.mesh): an id
+that stays while it is tracked, its pose, and its triangles in the pose's space, borrowed
+for the handler's call from where ARKit keeps them: `vertex_count` positions (3 floats
+each, `vertex_stride` bytes apart), as many normals (`normal_stride` apart) and
+`face_count` triangles of three indices (`index_bytes` 2 or 4 each). A piece grows and
+changes as the device sees more: its arrays may differ from one frame to the next.
+
+### ArMesh_vertex
+
+```eskiu
+ArVec3 ArMesh_vertex(*ArMesh self, int i)
+```
+
+Vertex i of a mesh, in its pose's space.
+
+### ArMesh_normal
+
+```eskiu
+ArVec3 ArMesh_normal(*ArMesh self, int i)
+```
+
+Normal i of a mesh.
+
+### ArMesh_index
+
+```eskiu
+int ArMesh_index(*ArMesh self, int k)
+```
+
+Index k (0 to 3 * face_count) of a mesh's triangles.
+
 ### ArFrame
 
 ```eskiu
@@ -366,20 +423,13 @@ struct ArFrame {
     ArDepth depth;
     *ArTrackedImage images;
     int image_count;
+    *ArMesh meshes;
+    int mesh_count;
     bool has_image;
 }
 ```
 
-A frame of the session, borrowed for the handler's call. `image` is the camera picture.
-`camera` is the camera's pose (camera to world, axes along the picture as the sensor gives
-it), `intrinsics` the picture's, `tracking` and `reason` how well it is tracked. Planes,
-anchors, image targets found and points are arrays of `*_count` items (planes, images and
-points only when the options asked for them); `light` and `depth` are set when asked for
-and available. `has_image` is false where the platform gives no camera picture (the web
-without WebXR raw camera access, where the browser draws the camera itself): `image` is
-then empty, with no planes, and only its size and rotation are set (the viewport's).
-
-### AR_FLAG_HORIZONTAL, AR_FLAG_VERTICAL, AR_FLAG_LIGHT, AR_FLAG_DEPTH, AR_FLAG_PEOPLE, AR_FLAG_POINTS, AR_FLAG_LIGHT_HDR, AR_FLAG_IMAGES
+### AR_FLAG_HORIZONTAL, AR_FLAG_VERTICAL, AR_FLAG_LIGHT, AR_FLAG_DEPTH, AR_FLAG_PEOPLE, AR_FLAG_MESH
 
 ```eskiu
 const int AR_FLAG_HORIZONTAL = 1;
@@ -387,12 +437,21 @@ const int AR_FLAG_VERTICAL = 2;
 const int AR_FLAG_LIGHT = 4;
 const int AR_FLAG_DEPTH = 8;
 const int AR_FLAG_PEOPLE = 128;
+const int AR_FLAG_MESH = 256;
+```
+
+Option flags for ar_native_session.
+
+### AR_MESH_INFO, AR_FLAG_POINTS, AR_FLAG_LIGHT_HDR, AR_FLAG_IMAGES
+
+```eskiu
+const int AR_MESH_INFO = 25;
 const int AR_FLAG_POINTS = 16;
 const int AR_FLAG_LIGHT_HDR = 32;
 const int AR_FLAG_IMAGES = 64;
 ```
 
-Option flags for ar_native_session.
+Values ar_native_mesh fills.
 
 ### AR_IMAGE_INFO
 

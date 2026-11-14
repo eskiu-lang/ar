@@ -7,6 +7,9 @@
 // before the session looks for it; found ones are ARImageAnchors. Status goes to the "ar"
 // channel. The layouts are src/ar.esk's.
 #import <ARKit/ARKit.h>
+
+#define AR_MESH_INFO_COUNT 25
+static int64_t planeId(NSUUID *identifier);
 #import <os/lock.h>
 #import "ui_native.h"
 
@@ -42,6 +45,7 @@ static CVPixelBufferRef lentDepth;
 static NSArray<ARPlaneAnchor *> *lentPlanes;
 static NSArray<ARAnchor *> *lentAnchors;
 static NSArray<ARImageAnchor *> *lentImages;
+static NSArray *lentMeshes;
 
 // Ids Eskiu sees: planes by their anchor's identifier, the app's anchors both ways.
 static NSMutableDictionary<NSUUID *, NSNumber *> *planeIds;
@@ -120,6 +124,11 @@ static void runConfiguration(void) {
     }
     if ((sessionFlags & 128) && [ARWorldTrackingConfiguration supportsFrameSemantics:ARFrameSemanticPersonSegmentationWithDepth]) {
         semantics |= ARFrameSemanticPersonSegmentationWithDepth;
+    }
+    if (@available(iOS 13.4, *)) {
+        if ((sessionFlags & 256) && [ARWorldTrackingConfiguration supportsSceneReconstruction:ARSceneReconstructionMesh]) {
+            config.sceneReconstruction = ARSceneReconstructionMesh;
+        }
     }
     config.frameSemantics = semantics;
     ARVideoFormat *format = videoFormat(sessionWidth, sessionHeight);
@@ -312,7 +321,14 @@ int ar_native_frame_acquire(int64_t *image, double *camera) {
     NSMutableArray<ARPlaneAnchor *> *planes = [NSMutableArray new];
     NSMutableArray<ARAnchor *> *anchors = [NSMutableArray new];
     NSMutableArray<ARImageAnchor *> *images = [NSMutableArray new];
+    NSMutableArray *meshes = [NSMutableArray new];
     for (ARAnchor *anchor in frame.anchors) {
+        if (@available(iOS 13.4, *)) {
+            if ([anchor isKindOfClass:ARMeshAnchor.class]) {
+                [meshes addObject:anchor];
+                continue;
+            }
+        }
         if ([anchor isKindOfClass:ARPlaneAnchor.class]) [planes addObject:(ARPlaneAnchor *)anchor];
         else if ([anchor isKindOfClass:ARImageAnchor.class]) [images addObject:(ARImageAnchor *)anchor];
         else if (anchorIds[anchor.identifier]) [anchors addObject:anchor];
@@ -320,6 +336,7 @@ int ar_native_frame_acquire(int64_t *image, double *camera) {
     lentPlanes = planes;
     lentAnchors = anchors;
     lentImages = images;
+    lentMeshes = meshes;
     return 1;
 }
 
@@ -338,9 +355,35 @@ void ar_native_frame_release(void) {
     lentPlanes = nil;
     lentAnchors = nil;
     lentImages = nil;
+    lentMeshes = nil;
 }
 
 int ar_native_plane_count(void) { return (int)lentPlanes.count; }
+
+int ar_native_mesh_count(void) { return (int)lentMeshes.count; }
+
+// A reconstruction mesh of the lent frame (LiDAR): id, pose, then the vertices, normals and
+// triangles where ARKit keeps them (shared Metal buffers, read in place while lent): pointer,
+// count and stride of the vertices, pointer and stride of the normals, pointer and count of
+// the triangles and the bytes of an index.
+void ar_native_mesh(int index, double *info) {
+    for (int i = 0; i < AR_MESH_INFO_COUNT; i++) info[i] = 0;
+    if (index < 0 || index >= (int)lentMeshes.count) return;
+    if (@available(iOS 13.4, *)) {
+        ARMeshAnchor *mesh = lentMeshes[index];
+        ARMeshGeometry *g = mesh.geometry;
+        info[0] = (double)planeId(mesh.identifier);
+        putMatrix(&info[1], mesh.transform);
+        info[17] = (double)(intptr_t)((uint8_t *)g.vertices.buffer.contents + g.vertices.offset);
+        info[18] = g.vertices.count;
+        info[19] = g.vertices.stride;
+        info[20] = (double)(intptr_t)((uint8_t *)g.normals.buffer.contents + g.normals.offset);
+        info[21] = g.normals.stride;
+        info[22] = (double)(intptr_t)g.faces.buffer.contents;
+        info[23] = g.faces.count;
+        info[24] = g.faces.bytesPerIndex;
+    }
+}
 
 static int64_t planeId(NSUUID *identifier) {
     NSNumber *id = planeIds[identifier];

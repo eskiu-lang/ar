@@ -31,6 +31,7 @@ void World() {
 | `light_hdr` | `false` | ARCore's environmental HDR estimate instead (main light and spherical harmonics). iOS treats it as `light`. |
 | `depth` | `false` | A depth image in `frame.depth` where the device has one: LiDAR on iOS (`sceneDepth`), the Depth API on Android. |
 | `people` | `false` | People in the depth image (iOS, A12 and later: ARKit's person segmentation with depth): without LiDAR `frame.depth` holds the people's depth (0 elsewhere), with it the nearer of the two at each pixel, so virtual content goes behind people. Android's Depth API measures people already. |
+| `mesh` | `false` | The world's mesh in `frame.meshes` where the device reconstructs it (LiDAR iPhones and iPads: ARKit's scene reconstruction): pieces with a pose and triangles, for occlusion and collisions. |
 | `points` | `false` | The feature points in `frame.points`. |
 | `image_width`, `image_height` | 1280, 720 | The camera picture's size, a wish as the sensor sees it (landscape). iOS picks the smallest video format that holds it, Android the smallest CPU image config; both fall back to the largest. The web scales its picture (with raw camera access) to fit the longer side. |
 | `images`, `image_count` | none | Pictures to find in the world ([image targets](images.md)). |
@@ -72,6 +73,7 @@ last one.
 | `light` | `ArLight`: `valid`, `intensity` (linear, 1.0 is a neutral scene; see [Light](#light)), `temperature` (kelvin, iOS), `color` (a linear tint), `raw_intensity` and `source` (the platform's own value and where it came from), and with `light_hdr` on Android the main light and 9 RGB spherical harmonics. |
 | `images`, `image_count` | The image targets found so far (`ArTrackedImage`: target index and name, pose, size, how it is followed; [image targets](images.md)). |
 | `depth` | `ArDepth`: size, format (`ArDepthMeters32` on iOS, `ArDepthMillimeters16` on Android), rows, `data` (null when none). `ArDepth_meters(x, y)` reads one pixel. It lines up with the picture as the sensor gives it. |
+| `meshes`, `mesh_count` | `ArMesh`es: `id`, `pose`, positions (`vertex_count`, `ArMesh_vertex(i)`), normals (`ArMesh_normal(i)`) and triangles (`face_count`, `ArMesh_index(k)`), borrowed from ARKit's buffers for the handler's call. |
 
 ### Light
 

@@ -57,6 +57,28 @@ void ar_native_frame_release() {
 }
 
 int ar_native_plane_count() { return 2; }
+// One triangle of the world's mesh when meshes_lent, 2 m ahead.
+bool meshes_lent;
+float[9] mesh_vertices = {0.0, 0.0, -2.0, 1.0, 0.0, -2.0, 0.0, 1.0, -2.0};
+float[9] mesh_normals = {0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0};
+uint32[3] mesh_faces = {0, 1, 2};
+
+int ar_native_mesh_count() { return meshes_lent ? 2 : 0; }
+
+void ar_native_mesh(int index, *double info) {
+    for (i in 0..AR_MESH_INFO) { info[i] = 0.0; }
+    if (index == 1) { return; }    // a piece lent empty: skipped
+    info[0] = 9.0;
+    info[1] = 1.0; info[6] = 1.0; info[11] = 1.0; info[16] = 1.0;
+    info[17] = (double)(int64)&mesh_vertices[0];
+    info[18] = 3.0;
+    info[19] = 12.0;
+    info[20] = (double)(int64)&mesh_normals[0];
+    info[21] = 12.0;
+    info[22] = (double)(int64)&mesh_faces[0];
+    info[23] = 1.0;
+    info[24] = 4.0;
+}
 
 // Plane 0: a floor 2 m by 1 m at y = -1.2 with a square outline; plane 1: a wall.
 int ar_native_plane(int index, *double info, *float polygon, int max_points) {
@@ -512,11 +534,24 @@ void depth_hits() {
     check(!f.depth_hit(50.0, 50.0, 100.0, 100.0, &h), "no hit without depth");
 }
 
+void meshes() {
+    meshes_lent = true;
+    ArFrame f;
+    ar_frame_fill(&f, AR_FLAG_MESH);
+    check(f.mesh_count == 1 && f.meshes[0].id == 9 && f.meshes[0].face_count == 1, "the mesh read, the empty piece skipped");
+    ArVec3 v = f.meshes[0].vertex(1);
+    check(v.x == 1.0 && v.z == -2.0 && f.meshes[0].index(2) == 2 && f.meshes[0].normal(0).z == 1.0, "its vertices, normals and triangles");
+    ar_frame_fill(&f, 0);
+    check(f.mesh_count == 0, "no meshes unless asked");
+    meshes_lent = false;
+}
+
 int main() {
     layout();
     bad_frames();
     hook();
     depth_hits();
+    meshes();
     printf("PASS session\n");
     return 0;
 }

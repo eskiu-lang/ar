@@ -94,6 +94,7 @@ struct ArOptions {
     bool light_hdr = false;
     bool depth = false;
     bool people = false;
+    bool mesh = false;
     bool points = false;
     int image_width = 1280;
     int image_height = 720;
@@ -228,6 +229,43 @@ struct ArTrackedImage {
 // and available. `has_image` is false where the platform gives no camera picture (the web
 // without WebXR raw camera access, where the browser draws the camera itself): `image` is
 // then empty, with no planes, and only its size and rotation are set (the viewport's).
+// A piece of the world's mesh (LiDAR scene reconstruction on iOS, ArOptions.mesh): an id
+// that stays while it is tracked, its pose, and its triangles in the pose's space, borrowed
+// for the handler's call from where ARKit keeps them: `vertex_count` positions (3 floats
+// each, `vertex_stride` bytes apart), as many normals (`normal_stride` apart) and
+// `face_count` triangles of three indices (`index_bytes` 2 or 4 each). A piece grows and
+// changes as the device sees more: its arrays may differ from one frame to the next.
+struct ArMesh {
+    int64 id;
+    ArMat4 pose;
+    *uint8 vertices;
+    int vertex_count;
+    int vertex_stride;
+    *uint8 normals;
+    int normal_stride;
+    *uint8 faces;
+    int face_count;
+    int index_bytes;
+}
+
+// Vertex i of a mesh, in its pose's space.
+ArVec3 ArMesh_vertex(*ArMesh self, int i) {
+    *float p = (*float)(self.vertices + (int64)i * self.vertex_stride);
+    return ArVec3{p[0], p[1], p[2]};
+}
+
+// Normal i of a mesh.
+ArVec3 ArMesh_normal(*ArMesh self, int i) {
+    *float p = (*float)(self.normals + (int64)i * self.normal_stride);
+    return ArVec3{p[0], p[1], p[2]};
+}
+
+// Index k (0 to 3 * face_count) of a mesh's triangles.
+int ArMesh_index(*ArMesh self, int k) {
+    if (self.index_bytes == 2) return (int)((*uint16)self.faces)[k];
+    return (int)((*uint32)self.faces)[k];
+}
+
 struct ArFrame {
     ArCameraImage image;
     ArMat4 camera;
@@ -244,6 +282,8 @@ struct ArFrame {
     ArDepth depth;
     *ArTrackedImage images;
     int image_count;
+    *ArMesh meshes;
+    int mesh_count;
     bool has_image;
 }
 
@@ -263,6 +303,8 @@ extern void ar_native_session(int on, int flags, int width, int height);
 extern int ar_native_frame_acquire(*int64 image, *double camera);
 extern void ar_native_frame_release();
 extern int ar_native_plane_count();
+extern int ar_native_mesh_count();
+extern void ar_native_mesh(int index, *double info);
 extern int ar_native_plane(int index, *double info, *float polygon, int max_points);
 extern int ar_native_anchor_count();
 extern void ar_native_anchor(int index, *double info);
@@ -284,6 +326,9 @@ const int AR_FLAG_VERTICAL = 2;
 const int AR_FLAG_LIGHT = 4;
 const int AR_FLAG_DEPTH = 8;
 const int AR_FLAG_PEOPLE = 128;
+const int AR_FLAG_MESH = 256;
+// Values ar_native_mesh fills.
+const int AR_MESH_INFO = 25;
 const int AR_FLAG_POINTS = 16;
 const int AR_FLAG_LIGHT_HDR = 32;
 const int AR_FLAG_IMAGES = 64;
@@ -336,6 +381,7 @@ int ar_flags(ArOptions options) {
     if (options.light) { flags |= AR_FLAG_LIGHT; }
     if (options.depth) { flags |= AR_FLAG_DEPTH; }
     if (options.people) { flags |= AR_FLAG_PEOPLE; }
+    if (options.mesh) { flags |= AR_FLAG_MESH; }
     if (options.points) { flags |= AR_FLAG_POINTS; }
     if (options.light_hdr) { flags |= AR_FLAG_LIGHT_HDR; }
     if (options.images != null && options.image_count > 0) { flags |= AR_FLAG_IMAGES; }
@@ -448,6 +494,7 @@ List<ArVec2> _ar_polygon;
 List<ArAnchor> _ar_anchors;
 List<ArPoint> _ar_points;
 List<ArTrackedImage> _ar_tracked;
+List<ArMesh> _ar_meshes;
 
 // The image targets the session has, as ar_send_images last sent them: each one's name
 // (copied), whether it was refused before reaching the platform, and what was sent, by
@@ -464,6 +511,7 @@ void ar_frame_fill(*ArFrame frame, int flags) {
     _ar_anchors.clear();
     _ar_points.clear();
     _ar_tracked.clear();
+    _ar_meshes.clear();
     double[AR_LIGHT_INFO] values;
     if ((flags & (AR_FLAG_HORIZONTAL | AR_FLAG_VERTICAL)) != 0) {
         int count = ar_native_plane_count();
@@ -516,6 +564,26 @@ void ar_frame_fill(*ArFrame frame, int flags) {
     }
     frame.images = _ar_tracked.size > 0 ? &_ar_tracked.data[0] : null;
     frame.image_count = (int)_ar_tracked.size;
+    if ((flags & AR_FLAG_MESH) != 0) {
+        double[AR_MESH_INFO] mv;
+        int count = ar_native_mesh_count();
+        for (i in 0..count) {
+            ar_native_mesh(i, &mv[0]);
+            ArMesh m = ArMesh{id: (int64)mv[0], vertex_count: (int)mv[18], vertex_stride: (int)mv[19], normal_stride: (int)mv[21],
+                face_count: (int)mv[23], index_bytes: (int)mv[24]};
+            m.pose = ar_mat4_from(&mv[1]);
+            m.vertices = (*uint8)(int64)mv[17];
+            m.normals = (*uint8)(int64)mv[20];
+            m.faces = (*uint8)(int64)mv[22];
+            // a mesh the platform lent whole: data, sane strides and index sizes
+            if (m.vertices == null || m.faces == null || m.vertex_count <= 0 || m.face_count <= 0 || m.vertex_stride < 12 ||
+                (m.normals != null && m.normal_stride < 12) || (m.index_bytes != 2 && m.index_bytes != 4) ||
+                !ar_mat4_finite(m.pose)) { continue; }
+            _ar_meshes.push(m);
+        }
+    }
+    frame.meshes = _ar_meshes.size > 0 ? &_ar_meshes.data[0] : null;
+    frame.mesh_count = (int)_ar_meshes.size;
     frame.planes = _ar_planes.size > 0 ? &_ar_planes.data[0] : null;
     frame.plane_count = (int)_ar_planes.size;
     frame.anchors = _ar_anchors.size > 0 ? &_ar_anchors.data[0] : null;

@@ -128,6 +128,8 @@ mergeInto(LibraryManager.library, {
     window.eskiuAr.imageAdd(index, pixels, width, height, path ? UTF8ToString(path) : null, physicalWidth);
   },
   ar_native_image_state: function(index) { return window.eskiuAr ? window.eskiuAr.imageState(index) : 2; },
+  ar_native_mesh_count: function() { return 0; },
+  ar_native_mesh: function(index, info) { for (let i = 0; i < 25; i++) HEAPF64[(info >> 3) + i] = 0; },
   ar_native_tracked_image_count: function() {
     const frame = window.eskiuAr && window.eskiuAr.lent();
     return frame ? frame.images.length : 0;
