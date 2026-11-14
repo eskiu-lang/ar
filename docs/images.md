@@ -90,3 +90,12 @@ physical width refused), that the same targets are not sent again and new ones r
 session, the states, and that a found image arrives with its name, method, pose and size.
 What needs a device: detection and tracking themselves on each platform, the pose's axes
 on a real picture, and ARKit's validation of a weak picture.
+
+## Objects
+
+`ArOptions.objects` (`object_count` of them) are real objects to find, ViroReact's
+`ViroARObjectMarker`: each an `ArObjectTarget` with a name and the ARKit reference object
+file (`.arobject`, scanned with Apple's scanning sample or Reality Composer) at `path`, an
+absolute path or an app asset's. Each frame's `objects` are the ones found (`ArTrackedObject`:
+id, target index and name, the reference object's pose, and its points' center and extent).
+iOS only: ARCore and WebXR do not detect objects, and there the list stays empty.

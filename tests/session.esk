@@ -175,6 +175,27 @@ int ar_native_semantics(*int64 info) {
     return 1;
 }
 
+int objects_set = -1;
+String object_paths;
+void ar_native_objects(int count) {
+    objects_set = count;
+    String_clear(&object_paths);
+}
+int ar_native_object_add(int index, string path) {
+    object_paths.appendf("%d:%s;", index, path);
+    return strstr(path, "missing") == null ? 1 : 0;
+}
+int ar_native_tracked_object_count() { return 2; }
+void ar_native_tracked_object(int index, *double info) {
+    for (i in 0..AR_OBJECT_INFO) { info[i] = 0.0; }
+    info[0] = 40.0 + (double)index;
+    info[1] = index == 0 ? 1.0 : 7.0;
+    info[2] = 1.0; info[7] = 1.0; info[12] = 1.0; info[17] = 1.0;
+    info[14] = -0.5;
+    info[19] = 0.1;
+    info[21] = 0.3; info[22] = 0.2; info[23] = 0.25;
+}
+
 String model_sent;
 int models_sent;
 void ar_native_depth_model(string path) {
@@ -624,6 +645,22 @@ void cloud_and_earth() {
     check(!ar_earth_read(&e[0], &earth), "Earth's values that are not numbers");
 }
 
+// Object targets: sent with their paths, read back with their names, a target the session
+// does not have dropped.
+void objects() {
+    ArObjectTarget[2] targets = {ArObjectTarget{name: "mug", path: "/objects/mug.arobject"}, ArObjectTarget{name: "chair", path: "/objects/missing.arobject"}};
+    check(ar_send_objects(&targets[0], 2) == 1 && objects_set == 2 &&
+          strcmp(object_paths.cstr(), "0:/objects/mug.arobject;1:/objects/missing.arobject;") == 0, "object targets sent, one loaded");
+    check((ar_flags(ArOptions{objects: &targets[0], object_count: 2}) & AR_FLAG_OBJECTS) != 0, "the objects flag");
+    double[AR_OBJECT_INFO] info;
+    ArTrackedObject o;
+    ar_native_tracked_object(0, &info[0]);
+    check(ar_tracked_object_read(&info[0], &o) && o.id == 40 && strcmp(o.name, "chair") == 0 && o.pose.m[12] == -0.5 &&
+          o.center.y == (float)0.1 && o.extent.x == (float)0.3, "a found object read back");
+    ar_native_tracked_object(1, &info[0]);
+    check(!ar_tracked_object_read(&info[0], &o), "a target the session does not have");
+}
+
 void depth_hits() {
     ArFrame f;
     f.camera = ar_mat4_identity();
@@ -664,6 +701,7 @@ int main() {
     depth_hits();
     depth_model();
     cloud_and_earth();
+    objects();
     meshes();
     printf("PASS session\n");
     return 0;

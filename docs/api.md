@@ -161,6 +161,8 @@ struct ArOptions {
     bool cloud_anchors = false;
     bool geospatial = false;
     bool semantics = false;
+    *ArObjectTarget objects;
+    int object_count;
     bool points = false;
     int image_width = 1280;
     int image_height = 720;
@@ -175,7 +177,8 @@ What use_ar_session asks for: plane detection (horizontal, vertical), the light 
 spherical harmonics; iOS ignores it), depth where the device has it (LiDAR on iOS, the
 Depth API on Android) or from `depth_model` (iOS: a CoreML depth model, Depth Anything V2
 metric, run on the picture where there is no LiDAR, or always with `depth_source`), the
-people's depth over it (`people`, iOS), ARCore's cloud anchors (`cloud_anchors`) and
+people's depth over it (`people`, iOS), real objects to find (`objects`: `object_count`
+ARKit reference objects, frame.objects; iOS), ARCore's cloud anchors (`cloud_anchors`) and
 Earth (`geospatial`: frame.earth and anchors at places on Earth) on Android, which need
 the app's Google Cloud API key, ARCore's scene semantics (`semantics`, Android: what each
 pixel shows, outdoors), the reconstructed mesh of the surroundings
@@ -435,6 +438,36 @@ it is tracked (an ArTracking) and how (an ArImageMethod), the pose of its center
 picture's right, z toward its bottom, y out of its face) and its size in meters along x
 and z, as the platform estimates it.
 
+### ArObjectTarget
+
+```eskiu
+struct ArObjectTarget {
+    string name;
+    string path;
+}
+```
+
+A real object to find (ViroReact's ViroARObjectMarker): a name, and the ARKit reference
+object file (.arobject, scanned with Apple's sample app or Reality Composer) at `path`, an
+absolute path or an app asset's. iOS only: ARCore and WebXR do not detect objects.
+
+### ArTrackedObject
+
+```eskiu
+struct ArTrackedObject {
+    int64 id;
+    int index;
+    string name;
+    ArMat4 pose;
+    ArVec3 center;
+    ArVec3 extent;
+}
+```
+
+An object found: an id that stays while it is tracked, which target it is (its index in
+ArOptions.objects) and its name, its pose (the reference object's origin), and the center
+and extent of the object's points in that pose's space.
+
 ### ArMesh
 
 ```eskiu
@@ -508,6 +541,8 @@ struct ArFrame {
     bool has_earth;
     ArEarth earth;
     ArSemantics semantics;
+    *ArTrackedObject objects;
+    int object_count;
 }
 ```
 
@@ -559,6 +594,22 @@ const int AR_FLAG_SEMANTICS = 8192;
 ```
 
 ARCore's scene semantics (Android).
+
+### AR_FLAG_OBJECTS
+
+```eskiu
+const int AR_FLAG_OBJECTS = 16384;
+```
+
+Real objects to find (ARKit's reference objects).
+
+### AR_OBJECT_INFO
+
+```eskiu
+const int AR_OBJECT_INFO = 24;
+```
+
+A tracked object: id, target index, the pose's 16 values, center and extent (3 each).
 
 ### AR_MESH_INFO, AR_FLAG_POINTS, AR_FLAG_LIGHT_HDR, AR_FLAG_IMAGES
 
@@ -712,6 +763,24 @@ bool ar_camera_read(*double info, *ArFrame out)
 
 The camera values the native side filled, checked, into the frame; false when the
 intrinsics do not describe an image or the pose is not a number.
+
+### ar_tracked_object_read
+
+```eskiu
+bool ar_tracked_object_read(*double info, *ArTrackedObject out)
+```
+
+The tracked-object values the native side filled, checked; false for a target the session
+does not have or a pose that is not a number.
+
+### ar_send_objects
+
+```eskiu
+int ar_send_objects(*ArObjectTarget objects, int count)
+```
+
+Sends the object targets to the platform (ar_native_objects, then one ar_native_object_add
+each, the path resolved as an image target's) and keeps their names; how many it loaded.
 
 ### ar_frame_fill
 

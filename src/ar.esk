@@ -88,7 +88,8 @@ struct ArImageTarget {
 // spherical harmonics; iOS ignores it), depth where the device has it (LiDAR on iOS, the
 // Depth API on Android) or from `depth_model` (iOS: a CoreML depth model, Depth Anything V2
 // metric, run on the picture where there is no LiDAR, or always with `depth_source`), the
-// people's depth over it (`people`, iOS), ARCore's cloud anchors (`cloud_anchors`) and
+// people's depth over it (`people`, iOS), real objects to find (`objects`: `object_count`
+// ARKit reference objects, frame.objects; iOS), ARCore's cloud anchors (`cloud_anchors`) and
 // Earth (`geospatial`: frame.earth and anchors at places on Earth) on Android, which need
 // the app's Google Cloud API key, ARCore's scene semantics (`semantics`, Android: what each
 // pixel shows, outdoors), the reconstructed mesh of the surroundings
@@ -110,6 +111,8 @@ struct ArOptions {
     bool cloud_anchors = false;
     bool geospatial = false;
     bool semantics = false;
+    *ArObjectTarget objects;
+    int object_count;
     bool points = false;
     int image_width = 1280;
     int image_height = 720;
@@ -287,6 +290,26 @@ struct ArTrackedImage {
     float extent_z;
 }
 
+// A real object to find (ViroReact's ViroARObjectMarker): a name, and the ARKit reference
+// object file (.arobject, scanned with Apple's sample app or Reality Composer) at `path`, an
+// absolute path or an app asset's. iOS only: ARCore and WebXR do not detect objects.
+struct ArObjectTarget {
+    string name;
+    string path;
+}
+
+// An object found: an id that stays while it is tracked, which target it is (its index in
+// ArOptions.objects) and its name, its pose (the reference object's origin), and the center
+// and extent of the object's points in that pose's space.
+struct ArTrackedObject {
+    int64 id;
+    int index;
+    string name;
+    ArMat4 pose;
+    ArVec3 center;
+    ArVec3 extent;
+}
+
 // A piece of the world's mesh (LiDAR scene reconstruction on iOS, ArOptions.mesh): an id
 // that stays while it is tracked, its pose, and its triangles in the pose's space, borrowed
 // for the handler's call from where ARKit keeps them: `vertex_count` positions (3 floats
@@ -354,6 +377,8 @@ struct ArFrame {
     bool has_earth;
     ArEarth earth;
     ArSemantics semantics;
+    *ArTrackedObject objects;
+    int object_count;
 }
 
 // The platform's side (native/ios, native/android, native/web). ar_native_session starts the
@@ -389,6 +414,10 @@ extern int ar_native_job(double job, *double info, *char text, int capacity);
 extern int ar_native_earth(*double info);
 extern int ar_native_semantics(*int64 info);
 extern double ar_native_vps_check(double lat, double lng);
+extern void ar_native_objects(int count);
+extern int ar_native_object_add(int index, string path);
+extern int ar_native_tracked_object_count();
+extern void ar_native_tracked_object(int index, *double info);
 extern int ar_native_hit_test(*float ray, int targets, *double out, int max_hits);
 extern double ar_native_anchor_add(*float pose, double plane);
 extern void ar_native_anchor_remove(double id);
@@ -414,6 +443,11 @@ const int AR_FLAG_CLOUD = 2048;
 const int AR_FLAG_GEO = 4096;
 // ARCore's scene semantics (Android).
 const int AR_FLAG_SEMANTICS = 8192;
+// Real objects to find (ARKit's reference objects).
+const int AR_FLAG_OBJECTS = 16384;
+
+// A tracked object: id, target index, the pose's 16 values, center and extent (3 each).
+const int AR_OBJECT_INFO = 24;
 // Values ar_native_mesh fills.
 const int AR_MESH_INFO = 25;
 const int AR_FLAG_POINTS = 16;
@@ -476,6 +510,7 @@ int ar_flags(ArOptions options) {
     if (options.cloud_anchors) { flags |= AR_FLAG_CLOUD; }
     if (options.geospatial) { flags |= AR_FLAG_GEO; }
     if (options.semantics) { flags |= AR_FLAG_SEMANTICS; }
+    if (options.objects != null && options.object_count > 0) { flags |= AR_FLAG_OBJECTS; }
     if (options.points) { flags |= AR_FLAG_POINTS; }
     if (options.light_hdr) { flags |= AR_FLAG_LIGHT_HDR; }
     if (options.images != null && options.image_count > 0) { flags |= AR_FLAG_IMAGES; }
@@ -594,6 +629,42 @@ List<ArMesh> _ar_meshes;
 // (copied), whether it was refused before reaching the platform, and what was sent, by
 // ar_images_key.
 List<String> _ar_image_names;
+List<String> _ar_object_names;
+List<ArTrackedObject> _ar_objects_found;
+
+// The tracked-object values the native side filled, checked; false for a target the session
+// does not have or a pose that is not a number.
+bool ar_tracked_object_read(*double info, *ArTrackedObject out) {
+    *out = ArTrackedObject{id: (int64)info[0], index: (int)info[1]};
+    if (out.index < 0 || out.index >= (int)_ar_object_names.size) { return false; }
+    out.name = _ar_object_names.data[out.index].data;
+    if (out.name == null) { out.name = ""; }
+    out.pose = ar_mat4_from(&info[2]);
+    if (!ar_mat4_finite(out.pose)) { return false; }
+    out.center = ArVec3{(float)info[18], (float)info[19], (float)info[20]};
+    out.extent = ArVec3{(float)info[21], (float)info[22], (float)info[23]};
+    return true;
+}
+
+// Sends the object targets to the platform (ar_native_objects, then one ar_native_object_add
+// each, the path resolved as an image target's) and keeps their names; how many it loaded.
+int ar_send_objects(*ArObjectTarget objects, int count) {
+    for (i in 0..(int)_ar_object_names.size) { String_free(&_ar_object_names.data[i]); }
+    _ar_object_names.clear();
+    if (objects == null || count < 0) { count = 0; }
+    ar_native_objects(count);
+    int loaded = 0;
+    for (i in 0..count) {
+        String name;
+        name.append(objects[i].name != null ? objects[i].name : "");
+        _ar_object_names.push(name);
+        bool owned;
+        string path = ar_image_path(objects[i].path, &owned);
+        if (path != null && ar_native_object_add(i, path) != 0) { loaded++; }
+        if (owned) { free((*void)path); }
+    }
+    return loaded;
+}
 List<bool> _ar_image_refused;
 int64 _ar_images_sent;
 
@@ -658,6 +729,18 @@ void ar_frame_fill(*ArFrame frame, int flags) {
     }
     frame.images = _ar_tracked.size > 0 ? &_ar_tracked.data[0] : null;
     frame.image_count = (int)_ar_tracked.size;
+    _ar_objects_found.clear();
+    if ((flags & AR_FLAG_OBJECTS) != 0) {
+        double[AR_OBJECT_INFO] ov;
+        int count = ar_native_tracked_object_count();
+        for (i in 0..count) {
+            ar_native_tracked_object(i, &ov[0]);
+            ArTrackedObject o;
+            if (ar_tracked_object_read(&ov[0], &o)) { _ar_objects_found.push(o); }
+        }
+    }
+    frame.objects = _ar_objects_found.size > 0 ? &_ar_objects_found.data[0] : null;
+    frame.object_count = (int)_ar_objects_found.size;
     if ((flags & AR_FLAG_MESH) != 0) {
         double[AR_MESH_INFO] mv;
         int count = ar_native_mesh_count();
@@ -1155,8 +1238,10 @@ void use_ar_session(ArOptions options, escaping fn(*ArFrame)->void on_frame) {
     bool new_images = images != held.images_key || options.tracked_images != held.options.tracked_images;
     if (held.asked && (flags != ar_flags(held.options) || held.options.image_width != options.image_width ||
                        held.options.image_height != options.image_height || new_images ||
-                       !ar_same_path(held.options.depth_model, options.depth_model))) {
+                       !ar_same_path(held.options.depth_model, options.depth_model) || held.options.objects != options.objects ||
+                       held.options.object_count != options.object_count)) {
         ar_send_depth_model(options);
+        if ((flags & AR_FLAG_OBJECTS) != 0) { ar_send_objects(options.objects, options.object_count); }
         if (new_images) { ar_send_images(options.images, options.image_count, options.tracked_images); }
         ar_session_flags = flags;
         ar_native_session(1, flags, options.image_width, options.image_height);
@@ -1171,6 +1256,7 @@ void use_ar_session(ArOptions options, escaping fn(*ArFrame)->void on_frame) {
         held.asked = true;
         ar_session_flags = ar_flags(held.options);
         ar_send_depth_model(held.options);
+        if ((ar_session_flags & AR_FLAG_OBJECTS) != 0) { ar_send_objects(held.options.objects, held.options.object_count); }
         ar_native_session(1, ar_session_flags, held.options.image_width, held.options.image_height);
     }, void() {
         ar_session_users--;

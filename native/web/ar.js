@@ -137,6 +137,10 @@ mergeInto(LibraryManager.library, {
   ar_native_earth: function(info) { return 0; },
   ar_native_semantics: function(info) { return 0; },
   ar_native_vps_check: function(lat, lng) { return 0; },
+  ar_native_objects: function(count) {},
+  ar_native_object_add: function(index, path) { return 0; },
+  ar_native_tracked_object_count: function() { return 0; },
+  ar_native_tracked_object: function(index, info) {},
   ar_native_mesh_count: function() { return 0; },
   ar_native_mesh: function(index, info) { for (let i = 0; i < 25; i++) HEAPF64[(info >> 3) + i] = 0; },
   ar_native_tracked_image_count: function() {

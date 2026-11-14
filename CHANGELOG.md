@@ -7,6 +7,8 @@ All notable changes to this package are documented in this file. The format is b
 
 ### Added
 
+- Object targets on iOS (ViroReact's ViroARObjectMarker): `ArOptions.objects`
+  (`ArObjectTarget`, ARKit `.arobject` files) and `frame.objects` (`ArTrackedObject`).
 - ARCore on iOS: with Google's ARCore SDK for iOS in the app ([ios.spm]) and `GARAPIKey`,
   cloud anchors, Earth, terrain and rooftop anchors, VPS availability and scene semantics
   work on iOS as on Android (a GARSession fed each ARKit frame).

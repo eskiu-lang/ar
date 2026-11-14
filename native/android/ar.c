@@ -909,6 +909,11 @@ static Snapshot *lentSnapshot(void) { return lent >= 0 ? &snapshots[lent] : NULL
 // ARCore has no reconstruction mesh (its depth is in ar_native_depth).
 // ARCore's Depth API gives depth without a sensor, so no depth model runs here.
 void ar_native_depth_model(const char *path) { (void)path; }
+// ARCore has no object detection: no targets load and none are found.
+void ar_native_objects(int count) { (void)count; }
+int ar_native_object_add(int index, const char *path) { (void)index; (void)path; return 0; }
+int ar_native_tracked_object_count(void) { return 0; }
+void ar_native_tracked_object(int index, double *info) { (void)index; for (int i = 0; i < 24; i++) info[i] = 0; }
 int ar_native_mesh_count(void) { return 0; }
 void ar_native_mesh(int index, double *info) { (void)index; for (int i = 0; i < 25; i++) info[i] = 0; }
 

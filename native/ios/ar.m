@@ -70,6 +70,10 @@ static CVPixelBufferRef lentDepth;
 static NSArray<ARPlaneAnchor *> *lentPlanes;
 static NSArray<ARAnchor *> *lentAnchors;
 static NSArray<ARImageAnchor *> *lentImages;
+static NSArray<ARObjectAnchor *> *lentObjects;
+// The object targets: an ARReferenceObject named by its index, or NSNull when it did not load.
+static NSMutableArray *objectTargets;
+static NSMutableDictionary<NSUUID *, NSNumber *> *objectIds;
 static NSArray *lentMeshes;
 
 // Ids Eskiu sees: planes by their anchor's identifier, the app's anchors both ways.
@@ -177,6 +181,12 @@ static void runConfiguration(void) {
             if (targetStates[i].intValue == 1 && [targets[i] isKindOfClass:ARReferenceImage.class]) [ready addObject:targets[i]];
         config.detectionImages = ready;
         config.maximumNumberOfTrackedImages = MIN((NSInteger)trackedMax, (NSInteger)ready.count);
+    }
+    if (sessionFlags & 16384) {
+        NSMutableSet<ARReferenceObject *> *objects = [NSMutableSet new];
+        for (id o in objectTargets)
+            if ([o isKindOfClass:ARReferenceObject.class]) [objects addObject:o];
+        config.detectionObjects = objects;
     }
     // A new session starts from scratch; new options on a running one keep the world.
     ARSessionRunOptions options = running ? 0 : ARSessionRunOptionResetTracking | ARSessionRunOptionRemoveExistingAnchors;
@@ -365,6 +375,7 @@ int ar_native_frame_acquire(int64_t *image, double *camera) {
     NSMutableArray<ARPlaneAnchor *> *planes = [NSMutableArray new];
     NSMutableArray<ARAnchor *> *anchors = [NSMutableArray new];
     NSMutableArray<ARImageAnchor *> *images = [NSMutableArray new];
+    NSMutableArray<ARObjectAnchor *> *objects = [NSMutableArray new];
     NSMutableArray *meshes = [NSMutableArray new];
     for (ARAnchor *anchor in frame.anchors) {
         if (@available(iOS 13.4, *)) {
@@ -375,11 +386,13 @@ int ar_native_frame_acquire(int64_t *image, double *camera) {
         }
         if ([anchor isKindOfClass:ARPlaneAnchor.class]) [planes addObject:(ARPlaneAnchor *)anchor];
         else if ([anchor isKindOfClass:ARImageAnchor.class]) [images addObject:(ARImageAnchor *)anchor];
+        else if ([anchor isKindOfClass:ARObjectAnchor.class]) [objects addObject:(ARObjectAnchor *)anchor];
         else if (anchorIds[anchor.identifier]) [anchors addObject:anchor];
     }
     lentPlanes = planes;
     lentAnchors = anchors;
     lentImages = images;
+    lentObjects = objects;
     lentMeshes = meshes;
     return 1;
 }
@@ -402,6 +415,7 @@ void ar_native_frame_release(void) {
     lentPlanes = nil;
     lentAnchors = nil;
     lentImages = nil;
+    lentObjects = nil;
     lentMeshes = nil;
 }
 
@@ -489,6 +503,55 @@ void ar_native_anchor(int index, double *info) {
     info[0] = (double)anchorIds[anchor.identifier].longLongValue;
     info[1] = trackingOf(lent.camera);
     putMatrix(&info[2], anchor.transform);
+}
+
+// A new set of object targets, loaded one by one by ar_native_object_add; a running session
+// looks for them from its next configuration.
+void ar_native_objects(int count) {
+    objectTargets = [NSMutableArray new];
+    if (!objectIds) objectIds = [NSMutableDictionary new];
+    for (int i = 0; i < count; i++) [objectTargets addObject:NSNull.null];
+}
+
+// Loads target `index` from an .arobject file; 1 when it loaded.
+int ar_native_object_add(int index, const char *path) {
+    if (index < 0 || index >= (int)objectTargets.count || !path) return 0;
+    NSError *error = nil;
+    ARReferenceObject *object = [[ARReferenceObject alloc] initWithArchiveURL:[NSURL fileURLWithPath:[NSString stringWithUTF8String:path]]
+                                                                        error:&error];
+    if (!object) {
+        NSLog(@"ar: object target %s does not load: %@", path, error.localizedDescription);
+        return 0;
+    }
+    object.name = [NSString stringWithFormat:@"%d", index];
+    objectTargets[index] = object;
+    if (running) runConfiguration();
+    return 1;
+}
+
+int ar_native_tracked_object_count(void) { return (int)lentObjects.count; }
+
+// An object anchor: the reference object's origin, and its points' center and extent.
+void ar_native_tracked_object(int index, double *info) {
+    for (int i = 0; i < 24; i++) info[i] = 0;
+    if (index < 0 || index >= (int)lentObjects.count) return;
+    ARObjectAnchor *anchor = lentObjects[index];
+    NSNumber *id = objectIds[anchor.identifier];
+    if (!id) {
+        id = @(nextId++);
+        objectIds[anchor.identifier] = id;
+    }
+    info[0] = id.doubleValue;
+    info[1] = anchor.referenceObject.name ? anchor.referenceObject.name.intValue : -1;
+    putMatrix(&info[2], anchor.transform);
+    simd_float3 c = anchor.referenceObject.center;
+    simd_float3 e = anchor.referenceObject.extent;
+    info[18] = c.x;
+    info[19] = c.y;
+    info[20] = c.z;
+    info[21] = e.x;
+    info[22] = e.y;
+    info[23] = e.z;
 }
 
 int ar_native_tracked_image_count(void) { return (int)lentImages.count; }
