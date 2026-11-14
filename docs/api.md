@@ -160,6 +160,7 @@ struct ArOptions {
     int depth_source = ArDepthSourceAuto;
     bool cloud_anchors = false;
     bool geospatial = false;
+    bool semantics = false;
     bool points = false;
     int image_width = 1280;
     int image_height = 720;
@@ -176,7 +177,8 @@ Depth API on Android) or from `depth_model` (iOS: a CoreML depth model, Depth An
 metric, run on the picture where there is no LiDAR, or always with `depth_source`), the
 people's depth over it (`people`, iOS), ARCore's cloud anchors (`cloud_anchors`) and
 Earth (`geospatial`: frame.earth and anchors at places on Earth) on Android, which need
-the app's Google Cloud API key, the reconstructed mesh of the surroundings
+the app's Google Cloud API key, ARCore's scene semantics (`semantics`, Android: what each
+pixel shows, outdoors), the reconstructed mesh of the surroundings
 (`mesh`, LiDAR), the feature points, the size of the camera picture (a wish: the
 platform gives the nearest it has, as the sensor sees it, landscape), and image targets:
 `image_count` pictures at `images` to find (frame.images), of which ARKit follows
@@ -329,6 +331,49 @@ longitude in degrees (WGS84), altitude in meters above the WGS84 ellipsoid, thei
 accuracies in meters, its rotation as an east-up-south quaternion and the yaw's accuracy in
 degrees.
 
+### ArSemanticLabel
+
+```eskiu
+enum ArSemanticLabel {
+    ArSemanticSidewalk, ArSemanticTerrain, ArSemanticStructure, ArSemanticObject, ArSemanticVehicle,
+    ArSemanticPerson, ArSemanticWater }
+}
+```
+
+What a pixel shows, in ARCore's scene semantics.
+
+### ArSemantics
+
+```eskiu
+struct ArSemantics {
+    int width;
+    int height;
+    *uint8 labels;
+    *uint8 confidence;
+}
+```
+
+Scene semantics (ArOptions.semantics, ARCore on Android, outdoor scenes): an image aligned
+with the camera picture as the sensor gives it, one ArSemanticLabel per pixel in `labels`
+and its confidence (0 to 255) in `confidence` (null when ARCore gave none), borrowed for
+the handler's call; `labels` is null when there are none.
+
+### ArSemantics_label
+
+```eskiu
+int ArSemantics_label(*ArSemantics self, int x, int y)
+```
+
+The label at pixel (x, y) of the semantic image; unlabeled outside it.
+
+### ArSemantics_fraction
+
+```eskiu
+float ArSemantics_fraction(*ArSemantics self, int label)
+```
+
+The share of the picture with that label (0 to 1), as ARCore's label fraction.
+
 ### ArDepth
 
 ```eskiu
@@ -462,6 +507,7 @@ struct ArFrame {
     bool has_image;
     bool has_earth;
     ArEarth earth;
+    ArSemantics semantics;
 }
 ```
 
@@ -505,6 +551,14 @@ const int AR_FLAG_GEO = 4096;
 ```
 
 ARCore's cloud anchors and Earth (Android).
+
+### AR_FLAG_SEMANTICS
+
+```eskiu
+const int AR_FLAG_SEMANTICS = 8192;
+```
+
+ARCore's scene semantics (Android).
 
 ### AR_MESH_INFO, AR_FLAG_POINTS, AR_FLAG_LIGHT_HDR, AR_FLAG_IMAGES
 
@@ -667,6 +721,15 @@ void ar_frame_fill(*ArFrame frame, int flags)
 
 Reads the lent frame's planes, anchors, points, light and depth into `frame`, as `flags`
 asked.
+
+### ar_semantics_read
+
+```eskiu
+void ar_semantics_read(*int64 info, *ArSemantics out)
+```
+
+The semantics values the native side filled, checked; left empty when they do not describe
+an image.
 
 ### ar_earth_read
 

@@ -1,4 +1,4 @@
-# Cloud anchors and Earth
+# Cloud anchors, Earth and semantics
 
 On Android, `ar` reaches ARCore's cloud anchors and its Geospatial API, as ViroReact's
 `hostCloudAnchor`, `resolveCloudAnchor` and geospatial anchors do with ARCore. ARKit has
@@ -45,3 +45,12 @@ int64 r = ar_rooftop_anchor(lat, lng, 0.0, &up[0]);   // a job: on the building'
 
 ARCore must be tracking Earth for these (`earth.tracking` normal), which needs Google's VPS
 coverage or a good GPS fix.
+
+## Scene semantics
+
+With `semantics` (Android, ARCore's Scene Semantics, for outdoor scenes), each frame has
+`semantics`: an image aligned with the camera picture, one `ArSemanticLabel` per pixel (sky,
+building, tree, road, sidewalk, terrain, structure, object, vehicle, person, water) and its
+confidence. `ArSemantics_label(x, y)` reads one, `ArSemantics_fraction(label)` is the share of
+the picture with it (ARCore's label fraction). Sample it through `ArFrame_display_transform`
+to mask content, as ViroReact's semantic masks do.

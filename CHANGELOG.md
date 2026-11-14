@@ -7,6 +7,9 @@ All notable changes to this package are documented in this file. The format is b
 
 ### Added
 
+- ARCore's scene semantics on Android: `ArOptions.semantics`, `frame.semantics`
+  (`ArSemantics`: a label and a confidence per pixel), `ArSemantics_label`,
+  `ArSemantics_fraction`.
 - ARCore's cloud anchors and Earth on Android: `ArOptions.cloud_anchors` and `geospatial`,
   `ar_host_cloud_anchor`, `ar_resolve_cloud_anchor`, `ar_earth_anchor`, `ar_terrain_anchor`,
   `ar_rooftop_anchor`, jobs followed with `ar_job`, and `frame.earth` (the camera's

@@ -51,6 +51,7 @@ static int loadArcore(void) {
 #define FLAG_IMAGES 64
 #define FLAG_CLOUD 2048
 #define FLAG_GEO 4096
+#define FLAG_SEMANTICS 8192
 #define MAX_IMAGES 100
 
 // One frame's worth of everything Eskiu reads, owned by this file.
@@ -76,6 +77,9 @@ typedef struct {
     double images[MAX_IMAGES][22];
     int has_earth;
     double earth[14];
+    uint8_t *semantics;
+    size_t semantics_cap;
+    int semantics_width, semantics_height, has_semantics, has_confidence;
 } Snapshot;
 
 static Snapshot snapshots[3];
@@ -459,6 +463,47 @@ static void readDepth(Snapshot *s) {
     p_ArImage_release(image);
 }
 
+// One 8-bit plane of an ARCore image, tight, into dst at `offset` (w x h); 0 when it is not
+// one.
+static int copyPlane8(ArImage *image, uint8_t *dst, int w, int h) {
+    int32_t iw = 0, ih = 0, row = 0, length = 0;
+    const uint8_t *data = NULL;
+    p_ArImage_getWidth(session, image, &iw);
+    p_ArImage_getHeight(session, image, &ih);
+    p_ArImage_getPlaneRowStride(session, image, 0, &row);
+    p_ArImage_getPlaneData(session, image, 0, &data, &length);
+    if (iw != w || ih != h || !data || row < w || (int64_t)(h - 1) * row + w > length) return 0;
+    for (int y = 0; y < h; y++) memcpy(dst + (size_t)y * w, data + (size_t)y * row, (size_t)w);
+    return 1;
+}
+
+// Scene semantics: the label of each pixel (sky, building, tree, road...) and its confidence,
+// one after the other in s->semantics.
+static void readSemantics(Snapshot *s) {
+    s->has_semantics = 0;
+    s->has_confidence = 0;
+    ArImage *labels = NULL;
+    if (p_ArFrame_acquireSemanticImage(session, frame, &labels) != AR_SUCCESS_ || !labels) return;
+    int32_t w = 0, h = 0;
+    p_ArImage_getWidth(session, labels, &w);
+    p_ArImage_getHeight(session, labels, &h);
+    size_t need = (size_t)w * h * 2;
+    if (w > 0 && h > 0 && w <= 4096 && h <= 4096) {
+        s->semantics = grow(s->semantics, &s->semantics_cap, need);
+        if (s->semantics_cap >= need && copyPlane8(labels, s->semantics, w, h)) {
+            s->semantics_width = w;
+            s->semantics_height = h;
+            s->has_semantics = 1;
+            ArImage *confidence = NULL;
+            if (p_ArFrame_acquireSemanticConfidenceImage(session, frame, &confidence) == AR_SUCCESS_ && confidence) {
+                s->has_confidence = copyPlane8(confidence, s->semantics + (size_t)w * h, w, h);
+                p_ArImage_release(confidence);
+            }
+        }
+    }
+    p_ArImage_release(labels);
+}
+
 // The image targets ARCore knows of, tracked or seen before (not stopped).
 static void readImages(Snapshot *s) {
     s->image_count = 0;
@@ -545,6 +590,8 @@ static int step(void) {
         else s->has_light = 0;
         if (flags & FLAG_DEPTH) readDepth(s);
         else s->has_depth = 0;
+        if (flags & FLAG_SEMANTICS) readSemantics(s);
+        else s->has_semantics = 0;
         if (flags & FLAG_IMAGES) readImages(s);
         else s->image_count = 0;
     }
@@ -690,6 +737,9 @@ static int configure(void) {
     int32_t geo = 0;
     if (flags & FLAG_GEO) p_ArSession_isGeospatialModeSupported(session, AR_GEOSPATIAL_MODE_ENABLED_, &geo);
     p_ArConfig_setGeospatialMode(session, config, geo ? AR_GEOSPATIAL_MODE_ENABLED_ : 0);
+    int32_t semantic = 0;
+    if (flags & FLAG_SEMANTICS) p_ArSession_isSemanticModeSupported(session, AR_SEMANTIC_MODE_ENABLED_, &semantic);
+    p_ArConfig_setSemanticMode(session, config, semantic ? AR_SEMANTIC_MODE_ENABLED_ : 0);
     ArAugmentedImageDatabase *database = buildDatabase();
     p_ArConfig_setAugmentedImageDatabase(session, config, database);
     if (database) p_ArAugmentedImageDatabase_destroy(database);
@@ -913,6 +963,18 @@ int ar_native_depth(int64_t *info) {
     info[3] = s->depth_width * 2;
     info[4] = (int64_t)(intptr_t)s->depth;
     info[5] = (int64_t)s->depth_width * s->depth_height * 2;
+    return 1;
+}
+
+// The lent frame's semantics: width, height, the labels, the confidences (0 when there are
+// none); 0 when it has none.
+int ar_native_semantics(int64_t *info) {
+    Snapshot *s = lentSnapshot();
+    if (!s || !s->has_semantics) return 0;
+    info[0] = s->semantics_width;
+    info[1] = s->semantics_height;
+    info[2] = (int64_t)(intptr_t)s->semantics;
+    info[3] = s->has_confidence ? (int64_t)(intptr_t)(s->semantics + (size_t)s->semantics_width * s->semantics_height) : 0;
     return 1;
 }
 

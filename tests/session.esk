@@ -164,6 +164,16 @@ int ar_native_earth(*double info) {
     return 1;
 }
 
+uint8[6] sem_labels = {1, 1, 2, 10, 1, 0};
+uint8[6] sem_conf = {255, 200, 128, 90, 255, 0};
+int ar_native_semantics(*int64 info) {
+    info[0] = 3;
+    info[1] = 2;
+    info[2] = (int64)&sem_labels[0];
+    info[3] = (int64)&sem_conf[0];
+    return 1;
+}
+
 String model_sent;
 int models_sent;
 void ar_native_depth_model(string path) {
@@ -601,6 +611,13 @@ void cloud_and_earth() {
     ArEarth earth;
     check(ar_earth_read(&e[0], &earth) && earth.tracking == ArTrackingNormal && earth.latitude == 19.4326 &&
           earth.altitude == 2240.0 && earth.rotation[1] == (float)0.7071 && earth.yaw_accuracy == 4.0, "Earth's pose");
+    int64[4] si;
+    ar_native_semantics(&si[0]);
+    ArSemantics sem;
+    ar_semantics_read(&si[0], &sem);
+    check(sem.label(0, 1) == ArSemanticPerson && sem.label(5, 0) == ArSemanticUnlabeled && sem.confidence[1] == 200 &&
+          sem.fraction(ArSemanticSky) == 0.5, "semantics: labels, confidence, fractions");
+    check((ar_flags(ArOptions{semantics: true}) & AR_FLAG_SEMANTICS) != 0, "the semantics flag");
     e[3] = 0.0 / 0.0;
     check(!ar_earth_read(&e[0], &earth), "Earth's values that are not numbers");
 }

@@ -6,7 +6,7 @@ Guides and reference for ar. The [README](../README.md) has the overview.
 - [The session](session.md)
 - [Drawing](drawing.md)
 - [Image targets](images.md)
-- [Cloud anchors and Earth](cloud.md)
+- [Cloud anchors, Earth and semantics](cloud.md)
 - [AR on the web](web.md)
 - [The geometry](math.md)
 - [Design](design.md)

@@ -57,6 +57,7 @@ typedef int32_t ArCloudAnchorState;
 typedef int32_t ArEarthState;
 typedef int32_t ArTerrainAnchorState;
 typedef int32_t ArRooftopAnchorState;
+typedef int32_t ArSemanticMode;
 typedef void (*ArHostCloudAnchorCallback)(void *context, char *cloud_anchor_id, ArCloudAnchorState cloud_anchor_state);
 typedef void (*ArResolveCloudAnchorCallback)(void *context, ArAnchor *anchor, ArCloudAnchorState cloud_anchor_state);
 typedef void (*ArResolveAnchorOnTerrainCallback)(void *context, ArAnchor *anchor, ArTerrainAnchorState terrain_anchor_state);
@@ -97,6 +98,7 @@ enum {
     AR_TERRAIN_ANCHOR_STATE_SUCCESS_ = 2,
     AR_ROOFTOP_ANCHOR_STATE_SUCCESS_ = 1,
     AR_EARTH_STATE_ENABLED_ = 0,
+    AR_SEMANTIC_MODE_ENABLED_ = 1,
 };
 
 #define AR_API \
@@ -238,6 +240,10 @@ enum {
     X(void, ArGeospatialPose_getAltitude, (const ArSession *session, const ArGeospatialPose *geospatial_pose, double *out_altitude_meters)) \
     X(void, ArGeospatialPose_getVerticalAccuracy, (const ArSession *session, const ArGeospatialPose *geospatial_pose, double *out_vertical_accuracy_meters)) \
     X(void, ArGeospatialPose_getEastUpSouthQuaternion, (const ArSession *session, const ArGeospatialPose *geospatial_pose, float *out_quaternion_4)) \
-    X(void, ArGeospatialPose_getOrientationYawAccuracy, (const ArSession *session, const ArGeospatialPose *geospatial_pose, double *out_orientation_yaw_accuracy_degrees))
+    X(void, ArGeospatialPose_getOrientationYawAccuracy, (const ArSession *session, const ArGeospatialPose *geospatial_pose, double *out_orientation_yaw_accuracy_degrees)) \
+    X(void, ArConfig_setSemanticMode, (const ArSession *session, ArConfig *config, ArSemanticMode semantic_mode)) \
+    X(void, ArSession_isSemanticModeSupported, (const ArSession *session, ArSemanticMode semantic_mode, int32_t *out_is_supported)) \
+    X(ArStatus, ArFrame_acquireSemanticImage, (const ArSession *session, const ArFrame *frame, ArImage **out_semantic_image)) \
+    X(ArStatus, ArFrame_acquireSemanticConfidenceImage, (const ArSession *session, const ArFrame *frame, ArImage **out_semantic_confidence_image))
 
 #endif

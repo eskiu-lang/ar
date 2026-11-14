@@ -846,3 +846,4 @@ int ar_native_job(double job, double *info, char *text, int capacity) {
     return 3;
 }
 int ar_native_earth(double *info) { return 0; }
+int ar_native_semantics(int64_t *info) { return 0; }
