@@ -43,6 +43,9 @@ int64 t = ar_terrain_anchor(lat, lng, 1.5, &up[0]);   // a job: 1.5 m above the 
 int64 r = ar_rooftop_anchor(lat, lng, 0.0, &up[0]);   // a job: on the building's roof
 ```
 
+`ar_vps_check(lat, lng)` asks whether Google's VPS covers a place: the job is done when it
+does and fails with code 2 when it does not.
+
 ARCore must be tracking Earth for these (`earth.tracking` normal), which needs Google's VPS
 coverage or a good GPS fix.
 

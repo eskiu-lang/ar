@@ -166,6 +166,7 @@ int ar_native_earth(*double info) {
 
 uint8[6] sem_labels = {1, 1, 2, 10, 1, 0};
 uint8[6] sem_conf = {255, 200, 128, 90, 255, 0};
+double ar_native_vps_check(double lat, double lng) { return 12.0; }
 int ar_native_semantics(*int64 info) {
     info[0] = 3;
     info[1] = 2;
@@ -604,6 +605,7 @@ void cloud_and_earth() {
     float[4] up = {0.0, 0.0, 0.0, 1.0};
     check(ar_job(ar_terrain_anchor(19.4, -99.1, 1.0, &up[0]), &j) == ArJobFailed && j.code == -2, "a refused terrain anchor");
     check(ar_rooftop_anchor(19.4, -99.1, 1.0, &up[0]) == 10 && ar_earth_anchor(19.4, -99.1, 2240.0, &up[0]) == 21, "rooftop and Earth anchors");
+    check(ar_vps_check(19.43, -99.13) == 12, "a VPS check starts a job");
     check(ar_job(99, &j) == ArJobUnknown, "an unknown job");
     j.cloud_id.free();
     double[14] e;

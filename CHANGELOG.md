@@ -12,7 +12,7 @@ All notable changes to this package are documented in this file. The format is b
   `ArSemantics_fraction`.
 - ARCore's cloud anchors and Earth on Android: `ArOptions.cloud_anchors` and `geospatial`,
   `ar_host_cloud_anchor`, `ar_resolve_cloud_anchor`, `ar_earth_anchor`, `ar_terrain_anchor`,
-  `ar_rooftop_anchor`, jobs followed with `ar_job`, and `frame.earth` (the camera's
+  `ar_rooftop_anchor`, `ar_vps_check` (VPS availability), jobs followed with `ar_job`, and `frame.earth` (the camera's
   geospatial pose). iOS answers that it has none.
 - Depth without LiDAR on iOS: `ArOptions.depth_model` runs a CoreML depth model (Depth
   Anything V2 metric) on the picture; `ArDepth.estimated` tells its depth from a sensor's,

@@ -58,6 +58,9 @@ typedef int32_t ArEarthState;
 typedef int32_t ArTerrainAnchorState;
 typedef int32_t ArRooftopAnchorState;
 typedef int32_t ArSemanticMode;
+typedef struct ArVpsAvailabilityFuture_ ArVpsAvailabilityFuture;
+typedef int32_t ArVpsAvailability;
+typedef void (*ArVpsAvailabilityCallback)(void *context, ArVpsAvailability availability);
 typedef void (*ArHostCloudAnchorCallback)(void *context, char *cloud_anchor_id, ArCloudAnchorState cloud_anchor_state);
 typedef void (*ArResolveCloudAnchorCallback)(void *context, ArAnchor *anchor, ArCloudAnchorState cloud_anchor_state);
 typedef void (*ArResolveAnchorOnTerrainCallback)(void *context, ArAnchor *anchor, ArTerrainAnchorState terrain_anchor_state);
@@ -99,6 +102,7 @@ enum {
     AR_ROOFTOP_ANCHOR_STATE_SUCCESS_ = 1,
     AR_EARTH_STATE_ENABLED_ = 0,
     AR_SEMANTIC_MODE_ENABLED_ = 1,
+    AR_VPS_AVAILABILITY_AVAILABLE_ = 1,
 };
 
 #define AR_API \
@@ -244,6 +248,8 @@ enum {
     X(void, ArConfig_setSemanticMode, (const ArSession *session, ArConfig *config, ArSemanticMode semantic_mode)) \
     X(void, ArSession_isSemanticModeSupported, (const ArSession *session, ArSemanticMode semantic_mode, int32_t *out_is_supported)) \
     X(ArStatus, ArFrame_acquireSemanticImage, (const ArSession *session, const ArFrame *frame, ArImage **out_semantic_image)) \
-    X(ArStatus, ArFrame_acquireSemanticConfidenceImage, (const ArSession *session, const ArFrame *frame, ArImage **out_semantic_confidence_image))
+    X(ArStatus, ArFrame_acquireSemanticConfidenceImage, (const ArSession *session, const ArFrame *frame, ArImage **out_semantic_confidence_image)) \
+    X(ArStatus, ArSession_checkVpsAvailabilityAsync, (ArSession *session, double latitude_degrees, double longitude_degrees, void *context, ArVpsAvailabilityCallback callback, ArVpsAvailabilityFuture **out_future)) \
+    X(void, ArVpsAvailabilityFuture_getResult, (const ArSession *session, const ArVpsAvailabilityFuture *future, ArVpsAvailability *out_result_availability))
 
 #endif

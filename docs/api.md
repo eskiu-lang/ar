@@ -806,6 +806,16 @@ int64 ar_rooftop_anchor(double lat, double lng, double height, *float rotation)
 
 An anchor `height` meters above a building's rooftop at a place; a job, or 0.
 
+### ar_vps_check
+
+```eskiu
+int64 ar_vps_check(double lat, double lng)
+```
+
+Asks whether Google's VPS covers a place (ARCore's VPS availability, which the Geospatial
+API localizes best with); a job: done when it does, failed with code 2 when it does not
+(negative: an error), or 0 when it cannot start.
+
 ### ar_job
 
 ```eskiu

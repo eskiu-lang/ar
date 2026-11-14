@@ -388,6 +388,7 @@ extern double ar_native_earth_resolve(int rooftop, double lat, double lng, doubl
 extern int ar_native_job(double job, *double info, *char text, int capacity);
 extern int ar_native_earth(*double info);
 extern int ar_native_semantics(*int64 info);
+extern double ar_native_vps_check(double lat, double lng);
 extern int ar_native_hit_test(*float ray, int targets, *double out, int max_hits);
 extern double ar_native_anchor_add(*float pose, double plane);
 extern void ar_native_anchor_remove(double id);
@@ -755,6 +756,13 @@ int64 ar_terrain_anchor(double lat, double lng, double height, *float rotation) 
 // An anchor `height` meters above a building's rooftop at a place; a job, or 0.
 int64 ar_rooftop_anchor(double lat, double lng, double height, *float rotation) {
     return (int64)ar_native_earth_resolve(1, lat, lng, height, rotation);
+}
+
+// Asks whether Google's VPS covers a place (ARCore's VPS availability, which the Geospatial
+// API localizes best with); a job: done when it does, failed with code 2 when it does not
+// (negative: an error), or 0 when it cannot start.
+int64 ar_vps_check(double lat, double lng) {
+    return (int64)ar_native_vps_check(lat, lng);
 }
 
 // Where a job stands into out (its cloud_id freed and filled again); a finished job is told

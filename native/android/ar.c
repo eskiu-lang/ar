@@ -1185,6 +1185,18 @@ double ar_native_earth_resolve(int rooftop, double lat, double lng, double alt, 
     return job;
 }
 
+// Asks whether Google's VPS covers a place; a job id (done: VPS there; failed: info[0] 2 for
+// not there, negative for an error), 0 when it cannot start.
+double ar_native_vps_check(double lat, double lng) {
+    pthread_mutex_lock(&session_lock);
+    double job = 0;
+    ArVpsAvailabilityFuture *f = NULL;
+    if (session && p_ArSession_checkVpsAvailabilityAsync(session, lat, lng, NULL, NULL, &f) == AR_SUCCESS_)
+        job = addJob(5, (ArFuture *)f);
+    pthread_mutex_unlock(&session_lock);
+    return job;
+}
+
 // Where a job stands: 0 pending, 1 done (info[1] the anchor's id for a resolve, `text` the
 // cloud anchor id for a host), 2 failed (info[0] ARCore's state for it), 3 no such job. A
 // finished job is reported once.
@@ -1226,6 +1238,9 @@ int ar_native_job(double job, double *info, char *text, int cap) {
                 p_ArResolveAnchorOnTerrainFuture_getResultTerrainAnchorState(session, (ArResolveAnchorOnTerrainFuture *)j->future, &state);
                 ok = state == AR_TERRAIN_ANCHOR_STATE_SUCCESS_;
                 if (ok) p_ArResolveAnchorOnTerrainFuture_acquireResultAnchor(session, (ArResolveAnchorOnTerrainFuture *)j->future, &anchor);
+            } else if (j->kind == 5) {
+                p_ArVpsAvailabilityFuture_getResult(session, (ArVpsAvailabilityFuture *)j->future, &state);
+                ok = state == AR_VPS_AVAILABILITY_AVAILABLE_;
             } else {
                 p_ArResolveAnchorOnRooftopFuture_getResultRooftopAnchorState(session, (ArResolveAnchorOnRooftopFuture *)j->future, &state);
                 ok = state == AR_ROOFTOP_ANCHOR_STATE_SUCCESS_;

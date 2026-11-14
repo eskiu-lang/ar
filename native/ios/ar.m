@@ -847,3 +847,4 @@ int ar_native_job(double job, double *info, char *text, int capacity) {
 }
 int ar_native_earth(double *info) { return 0; }
 int ar_native_semantics(int64_t *info) { return 0; }
+double ar_native_vps_check(double lat, double lng) { return 0; }
