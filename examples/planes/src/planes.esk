@@ -3,6 +3,7 @@
 import <string>;
 import <ui>;
 import <ar>;
+import <ar/ui>;
 
 *Signal<int> planes_tick;
 *Signal<int> planes_status;

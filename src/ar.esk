@@ -9,7 +9,6 @@
 // ArUnsupported.
 import <string>;
 import <list>;
-import <ui>;
 import <ar/math>;
 
 // Where the session is: starting (asking for the camera, installing ARCore), running, or
@@ -1145,13 +1144,24 @@ int64 ar_images_key(*ArImageTarget images, int count) {
     return (int64)(h | 1);
 }
 
+// How a relative target path becomes the app's asset (an allocated path, or null when there
+// is no such asset): <ar/ui> sets ui_asset_path; a host without eskiu-lang/ui may set its own.
+fn(string)->string ar_asset_resolver;
+bool ar_has_asset_resolver = false;
+
+void ar_set_asset_resolver(escaping fn(string)->string resolver) {
+    ar_asset_resolver = resolver;
+    ar_has_asset_resolver = true;
+}
+
 // A target's file as a path the platform opens: an absolute path or (on the web) a URL as it
-// is, else the app's asset of that name (ui_asset_path), else the path as given. The caller
-// frees the result when `owned` comes back true.
+// is, else the app's asset of that name (ar_set_asset_resolver), else the path as given. The
+// caller frees the result when `owned` comes back true.
 string ar_image_path(string path, *bool owned) {
     *owned = false;
     if (path == null || path[0] == 0 || path[0] == '/' || strstr(path, "://") != null) { return path; }
-    string found = ui_asset_path(path);
+    if (!ar_has_asset_resolver) { return path; }
+    string found = ar_asset_resolver(path);
     if (found == null) { return path; }
     *owned = true;
     return found;
@@ -1409,9 +1419,6 @@ int64 ar_anchor_add_hit(*ArHit hit) { return (int64)ar_native_anchor_add(&hit.po
 // Removes the anchor `id`; it is gone from the next frame.
 void ar_anchor_remove(int64 id) { ar_native_anchor_remove((double)id); }
 
-// The latest render's frame handler and the options it asked for, kept in the hook's slot.
-struct ArSessionHandler { fn(*ArFrame)->void handler; ArOptions options; bool asked; int64 images_key; }
-
 // How many use_ar_session scopes are mounted, and the flags the first asked for.
 int ar_session_users;
 int ar_session_flags;
@@ -1433,54 +1440,23 @@ void ar_deliver_frame(fn(*ArFrame)->void handler) {
     ar_native_frame_release();
 }
 
-// Runs a world-tracking session while the scope is mounted, and hands `on_frame` each new
-// frame on the UI thread, borrowed for the call (copy what you keep). A frame that arrives
-// while it runs replaces the one waiting: a slow handler gets fewer, newer frames. New
-// options start the session again with them. One session runs at a time; mount one per
-// screen.
-void use_ar_session(ArOptions options, escaping fn(*ArFrame)->void on_frame) {
-    static int tag;
-    *Slot slot = ui_slot(10, &tag);
-    *ArSessionHandler held = (*ArSessionHandler)slot.data;
-    if (held == null) {
-        held = alloc<ArSessionHandler>(1);
-        slot.data = held;
-        slot.dispose = void() { ar_release_handler(held.handler); free(held); };
-    } else { ar_release_handler(held.handler); }
-    held.handler = on_frame;
+// Starts the world-tracking session with options, for a host that drives it itself (the
+// hooks in <ar/ui> do this for an eskiu-lang/ui app); ar_poll_frame then hands it frames.
+void ar_session_start(ArOptions options) {
     int flags = ar_flags(options);
-    int64 images = ar_images_key(options.images, options.image_count);
-    bool new_images = images != held.images_key || options.tracked_images != held.options.tracked_images;
-    if (held.asked && (flags != ar_flags(held.options) || held.options.image_width != options.image_width ||
-                       held.options.image_height != options.image_height || new_images ||
-                       !ar_same_path(held.options.depth_model, options.depth_model) || held.options.objects != options.objects ||
-                       held.options.object_count != options.object_count)) {
-        ar_send_depth_model(options);
-        if ((flags & AR_FLAG_OBJECTS) != 0) { ar_send_objects(options.objects, options.object_count); }
-        if (new_images) { ar_send_images(options.images, options.image_count, options.tracked_images); }
-        ar_session_flags = flags;
-        ar_native_session(1, flags, options.image_width, options.image_height);
-    } else if (!held.asked && new_images) {
-        ar_send_images(options.images, options.image_count, options.tracked_images);
-    }
-    held.images_key = images;
-    held.options = options;
-    use_native_event("ar_frame", void(string payload) { ar_deliver_frame(held.handler); });
-    use_mount(void() {
-        ar_session_users++;
-        held.asked = true;
-        ar_session_flags = ar_flags(held.options);
-        ar_send_depth_model(held.options);
-        if ((ar_session_flags & AR_FLAG_OBJECTS) != 0) { ar_send_objects(held.options.objects, held.options.object_count); }
-        ar_native_session(1, ar_session_flags, held.options.image_width, held.options.image_height);
-    }, void() {
-        ar_session_users--;
-        if (ar_session_users == 0) { ar_native_session(0, 0, 0, 0); }
-    });
+    ar_send_depth_model(options);
+    if ((flags & AR_FLAG_OBJECTS) != 0) { ar_send_objects(options.objects, options.object_count); }
+    ar_send_images(options.images, options.image_count, options.tracked_images);
+    ar_session_flags = flags;
+    ar_native_session(1, flags, options.image_width, options.image_height);
 }
 
-// The latest render's status handler, kept in the hook's slot.
-struct ArStatusHandler { fn(int)->void handler; }
+// Stops the session ar_session_start started.
+void ar_session_stop() { ar_native_session(0, 0, 0, 0); }
+
+// Hands `handler` the newest frame, borrowed for the call, if there is one since the last.
+void ar_poll_frame(fn(*ArFrame)->void handler) { ar_deliver_frame(handler); }
+
 
 // The last status the platform reported (an ArStatus).
 int ar_last_status = ArStarting;
@@ -1488,20 +1464,3 @@ int ar_last_status = ArStarting;
 // Frees a status handler's closure; use_ar_status calls it when it replaces or drops it.
 void ar_release_status_handler(escaping fn(int)->void handler) { free_closure(handler); }
 
-// `on_status` gets each ArStatus the session reports while the scope is mounted: running,
-// or why there is no AR (unsupported, denied, installing, failed, paused).
-void use_ar_status(escaping fn(int)->void on_status) {
-    static int tag;
-    *Slot slot = ui_slot(10, &tag);
-    *ArStatusHandler held = (*ArStatusHandler)slot.data;
-    if (held == null) {
-        held = alloc<ArStatusHandler>(1);
-        slot.data = held;
-        slot.dispose = void() { ar_release_status_handler(held.handler); free(held); };
-    } else { ar_release_status_handler(held.handler); }
-    held.handler = on_status;
-    use_native_event("ar", void(string payload) {
-        ar_last_status = ar_read_status(payload);
-        held.handler(ar_last_status);
-    });
-}

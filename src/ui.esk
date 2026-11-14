@@ -1,0 +1,80 @@
+// The AR session as eskiu-lang/ui hooks: use_ar_session runs a session while a scope is
+// mounted and hands it frames on the UI thread, use_ar_status reports the session's status.
+// <ar> itself does not need eskiu-lang/ui (ar_session_start and ar_poll_frame drive a session
+// from any host).
+import <mem>;
+import <list>;
+import <string>;
+import <ui>;
+import <ar>;
+
+// The latest render's frame handler and the options it asked for, kept in the hook's slot.
+struct ArSessionHandler { fn(*ArFrame)->void handler; ArOptions options; bool asked; int64 images_key; }
+
+// Runs a world-tracking session while the scope is mounted, and hands `on_frame` each new
+// frame on the UI thread, borrowed for the call (copy what you keep). A frame that arrives
+// while it runs replaces the one waiting: a slow handler gets fewer, newer frames. New
+// options start the session again with them. One session runs at a time; mount one per
+// screen.
+void use_ar_session(ArOptions options, escaping fn(*ArFrame)->void on_frame) {
+    if (!ar_has_asset_resolver) { ar_set_asset_resolver(ui_asset_path); }
+    static int tag;
+    *Slot slot = ui_slot(10, &tag);
+    *ArSessionHandler held = (*ArSessionHandler)slot.data;
+    if (held == null) {
+        held = alloc<ArSessionHandler>(1);
+        slot.data = held;
+        slot.dispose = void() { ar_release_handler(held.handler); free(held); };
+    } else { ar_release_handler(held.handler); }
+    held.handler = on_frame;
+    int flags = ar_flags(options);
+    int64 images = ar_images_key(options.images, options.image_count);
+    bool new_images = images != held.images_key || options.tracked_images != held.options.tracked_images;
+    if (held.asked && (flags != ar_flags(held.options) || held.options.image_width != options.image_width ||
+                       held.options.image_height != options.image_height || new_images ||
+                       !ar_same_path(held.options.depth_model, options.depth_model) || held.options.objects != options.objects ||
+                       held.options.object_count != options.object_count)) {
+        ar_send_depth_model(options);
+        if ((flags & AR_FLAG_OBJECTS) != 0) { ar_send_objects(options.objects, options.object_count); }
+        if (new_images) { ar_send_images(options.images, options.image_count, options.tracked_images); }
+        ar_session_flags = flags;
+        ar_native_session(1, flags, options.image_width, options.image_height);
+    } else if (!held.asked && new_images) {
+        ar_send_images(options.images, options.image_count, options.tracked_images);
+    }
+    held.images_key = images;
+    held.options = options;
+    use_native_event("ar_frame", void(string payload) { ar_deliver_frame(held.handler); });
+    use_mount(void() {
+        ar_session_users++;
+        held.asked = true;
+        ar_session_flags = ar_flags(held.options);
+        ar_send_depth_model(held.options);
+        if ((ar_session_flags & AR_FLAG_OBJECTS) != 0) { ar_send_objects(held.options.objects, held.options.object_count); }
+        ar_native_session(1, ar_session_flags, held.options.image_width, held.options.image_height);
+    }, void() {
+        ar_session_users--;
+        if (ar_session_users == 0) { ar_native_session(0, 0, 0, 0); }
+    });
+}
+
+// The latest render's status handler, kept in the hook's slot.
+struct ArStatusHandler { fn(int)->void handler; }
+
+// `on_status` gets each ArStatus the session reports while the scope is mounted: running,
+// or why there is no AR (unsupported, denied, installing, failed, paused).
+void use_ar_status(escaping fn(int)->void on_status) {
+    static int tag;
+    *Slot slot = ui_slot(10, &tag);
+    *ArStatusHandler held = (*ArStatusHandler)slot.data;
+    if (held == null) {
+        held = alloc<ArStatusHandler>(1);
+        slot.data = held;
+        slot.dispose = void() { ar_release_status_handler(held.handler); free(held); };
+    } else { ar_release_status_handler(held.handler); }
+    held.handler = on_status;
+    use_native_event("ar", void(string payload) {
+        ar_last_status = ar_read_status(payload);
+        held.handler(ar_last_status);
+    });
+}

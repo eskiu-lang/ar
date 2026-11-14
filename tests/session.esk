@@ -5,6 +5,7 @@
 import <io>;
 import <ui>;
 import <ar>;
+import <ar/ui>;
 
 void check(bool ok, string what) {
     if (!ok) {
