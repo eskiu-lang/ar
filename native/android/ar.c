@@ -821,7 +821,10 @@ static int configure(void) {
     p_ArConfig_setDepthMode(session, config, depth ? AR_DEPTH_MODE_AUTOMATIC_ : 0);
     p_ArConfig_setCloudAnchorMode(session, config, (flags & FLAG_CLOUD) && !front ? AR_CLOUD_ANCHOR_MODE_ENABLED_ : 0);
     int32_t geo = 0;
-    if (flags & FLAG_GEO) p_ArSession_isGeospatialModeSupported(session, AR_GEOSPATIAL_MODE_ENABLED_, &geo);
+    if (flags & FLAG_GEO) {
+        p_ArSession_isGeospatialModeSupported(session, AR_GEOSPATIAL_MODE_ENABLED_, &geo);
+        if (!geo) fprintf(stderr, "ar: ARCore's geospatial mode is not supported on this device\n");
+    }
     p_ArConfig_setGeospatialMode(session, config, geo ? AR_GEOSPATIAL_MODE_ENABLED_ : 0);
     int32_t semantic = 0;
     if (flags & FLAG_SEMANTICS) p_ArSession_isSemanticModeSupported(session, AR_SEMANTIC_MODE_ENABLED_, &semantic);
@@ -831,6 +834,7 @@ static int configure(void) {
     if (database) p_ArAugmentedImageDatabase_destroy(database);
     ArStatus result = p_ArSession_configure(session, config);
     p_ArConfig_destroy(config);
+    if (result != AR_SUCCESS_) fprintf(stderr, "ar: ARCore refused the configuration (%d)\n", (int)result);
     return result == AR_SUCCESS_;
 }
 
