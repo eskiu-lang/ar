@@ -54,6 +54,8 @@ const int AR_HIT_ESTIMATED = 2;
 // Hit kinds in ArHit.kind.
 const int AR_HIT_PLANE = 1;
 const int AR_HIT_ESTIMATE = 2;
+// A hit on the depth image (ArFrame_depth_hit): a real surface where no plane was found.
+const int AR_HIT_DEPTH = 3;
 
 // How the pixels of an ArImageTarget are laid out: one 8-bit gray value each, or 8-bit red,
 // green, blue and alpha.
@@ -709,6 +711,63 @@ float ArDepth_meters(*ArDepth self, int x, int y) {
         return v == v ? v : 0.0;
     }
     return (float)((*uint16)row)[x] / 1000.0;
+}
+
+// The world point the depth image sees at pixel (u, v) of the picture (as the sensor gives
+// it), and false where the depth is unknown.
+bool _ar_depth_point(*ArFrame self, double u, double v, *ArVec3 out) {
+    *ArIntrinsics k = &self.intrinsics;
+    int dx = (int)(u * (double)self.depth.width / (double)k.width);
+    int dy = (int)(v * (double)self.depth.height / (double)k.height);
+    float d = self.depth.meters(dx, dy);
+    if (!(d > 0.0)) { return false; }
+    ArVec3 c = ArVec3{(float)((u - (double)k.cx) / (double)k.fx * (double)d), (float)(-(v - (double)k.cy) / (double)k.fy * (double)d), -d};
+    *out = ar_mat4_point(self.camera, c);
+    return true;
+}
+
+// Hit-tests the depth image under the point (x, y) of a viewport `width` x `height`, as
+// ViroReact's depth hit tests: the real surface there, planes found or not (a sofa, a
+// person, a step). On a hit, `out` gets its distance, AR_HIT_DEPTH, plane 0 and a pose at
+// the point with y along the surface's normal (from the depth around it, toward the camera).
+// False without depth (ArOptions.depth) or where the depth is unknown.
+bool ArFrame_depth_hit(*ArFrame self, float x, float y, float width, float height, *ArHit out) {
+    if (self.depth.data == null || !(self.intrinsics.fx > 0.0) || !(width > 0.0) || !(height > 0.0)) { return false; }
+    ArVec2 p = self.intrinsics.view_to_image(self.image.rotation, (double)width, (double)height, (double)x, (double)y);
+    ArVec3 at;
+    if (!_ar_depth_point(self, (double)p.x, (double)p.y, &at)) { return false; }
+    // the normal from the neighbouring depth pixels
+    double step = (double)self.intrinsics.width / (double)self.depth.width;
+    ArVec3 l;
+    ArVec3 r;
+    ArVec3 u;
+    ArVec3 dn;
+    ArVec3 n = ArVec3{0.0, 1.0, 0.0};
+    if (_ar_depth_point(self, (double)p.x - step, (double)p.y, &l) && _ar_depth_point(self, (double)p.x + step, (double)p.y, &r) &&
+        _ar_depth_point(self, (double)p.x, (double)p.y - step, &u) && _ar_depth_point(self, (double)p.x, (double)p.y + step, &dn)) {
+        ArVec3 a = ArVec3{r.x - l.x, r.y - l.y, r.z - l.z};
+        ArVec3 b = ArVec3{dn.x - u.x, dn.y - u.y, dn.z - u.z};
+        ArVec3 c = ArVec3{a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+        float len = (float)sqrt((double)(c.x * c.x + c.y * c.y + c.z * c.z));
+        if (len > 1e-9) { n = ArVec3{c.x / len, c.y / len, c.z / len}; }
+    }
+    ArVec3 eye = ar_mat4_position(self.camera);
+    ArVec3 to = ArVec3{eye.x - at.x, eye.y - at.y, eye.z - at.z};
+    if (n.x * to.x + n.y * to.y + n.z * to.z < 0.0) { n = ArVec3{-n.x, -n.y, -n.z}; }
+    // x across the normal (level when it can be), z = x cross y
+    ArVec3 side = n.y > 0.99 || n.y < -0.99 ? ArVec3{1.0, 0.0, 0.0} : ArVec3{0.0, 1.0, 0.0};
+    ArVec3 xa = ArVec3{side.y * n.z - side.z * n.y, side.z * n.x - side.x * n.z, side.x * n.y - side.y * n.x};
+    float xl = (float)sqrt((double)(xa.x * xa.x + xa.y * xa.y + xa.z * xa.z));
+    xa = ArVec3{xa.x / xl, xa.y / xl, xa.z / xl};
+    ArVec3 za = ArVec3{xa.y * n.z - xa.z * n.y, xa.z * n.x - xa.x * n.z, xa.x * n.y - xa.y * n.x};
+    ArMat4 pose = ar_mat4_identity();
+    pose.m[0] = xa.x; pose.m[1] = xa.y; pose.m[2] = xa.z;
+    pose.m[4] = n.x; pose.m[5] = n.y; pose.m[6] = n.z;
+    pose.m[8] = za.x; pose.m[9] = za.y; pose.m[10] = za.z;
+    pose.m[12] = at.x; pose.m[13] = at.y; pose.m[14] = at.z;
+    float dist = (float)sqrt((double)(to.x * to.x + to.y * to.y + to.z * to.z));
+    *out = ArHit{distance: dist, kind: AR_HIT_DEPTH, plane: 0, pose: pose};
+    return true;
 }
 
 // The view matrix (world to camera) for the screen: x right and y up as the picture shows

@@ -7,6 +7,8 @@ All notable changes to this package are documented in this file. The format is b
 
 ### Added
 
+- `ArFrame_depth_hit` and `AR_HIT_DEPTH`: hit tests against the depth image, with the
+  surface's normal (ViroReact's depth hit tests).
 - `ArOptions.people`: the depth of the people in the picture in `frame.depth` (ARKit's
   person segmentation with depth, merged with LiDAR's scene depth where there is one), for
   occlusion by people.

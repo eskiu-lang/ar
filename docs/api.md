@@ -96,6 +96,14 @@ const int AR_HIT_ESTIMATE = 2;
 
 Hit kinds in ArHit.kind.
 
+### AR_HIT_DEPTH
+
+```eskiu
+const int AR_HIT_DEPTH = 3;
+```
+
+A hit on the depth image (ArFrame_depth_hit): a real surface where no plane was found.
+
 ### ArPixelFormat
 
 ```eskiu
@@ -621,6 +629,18 @@ float ArDepth_meters(*ArDepth self, int x, int y)
 ```
 
 The depth at pixel (x, y) of the depth image in meters; 0 outside it or where unknown.
+
+### ArFrame_depth_hit
+
+```eskiu
+bool ArFrame_depth_hit(*ArFrame self, float x, float y, float width, float height, *ArHit out)
+```
+
+Hit-tests the depth image under the point (x, y) of a viewport `width` x `height`, as
+ViroReact's depth hit tests: the real surface there, planes found or not (a sofa, a
+person, a step). On a hit, `out` gets its distance, AR_HIT_DEPTH, plane 0 and a pose at
+the point with y along the surface's normal (from the depth around it, toward the camera).
+False without depth (ArOptions.depth) or where the depth is unknown.
 
 ### ArFrame_view
 

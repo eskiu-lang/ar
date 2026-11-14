@@ -486,10 +486,37 @@ void layout() {
     check(sizeof(ArMat4) == 64, "ArMat4 is 64 bytes, as Mat4");
 }
 
+// Depth hits: a wall 2 m ahead of a camera at the origin, then the same wall tilted.
+float[16] wall_depth;
+
+bool near_eq(double a, double b, double tolerance) { return a - b <= tolerance && b - a <= tolerance; }
+
+void depth_hits() {
+    ArFrame f;
+    f.camera = ar_mat4_identity();
+    f.intrinsics = ArIntrinsics{100.0, 100.0, 50.0, 50.0, 100, 100};
+    for (i in 0..16) wall_depth[i] = 2.0;
+    f.depth = ArDepth{4, 4, ArDepthMeters32, 16, (*uint8)&wall_depth[0], 64};
+    ArHit h;
+    check(f.depth_hit(50.0, 50.0, 100.0, 100.0, &h), "a depth hit in the middle");
+    check(h.kind == AR_HIT_DEPTH && near_eq((double)h.pose.m[14], -2.0, 1e-4) && near_eq((double)h.distance, 2.0, 1e-4), "the wall 2 m ahead");
+    check(near_eq((double)h.pose.m[6], 1.0, 1e-4), "its normal toward the camera");
+    // depth growing to the right: the wall turns away, its normal leans right
+    for (y in 0..4) {
+        for (x in 0..4) wall_depth[y * 4 + x] = 2.0 + 0.5 * (float)x;
+    }
+    check(f.depth_hit(50.0, 50.0, 100.0, 100.0, &h) && h.pose.m[4] > 0.1, "a tilted wall's normal");
+    wall_depth[2 * 4 + 2] = 0.0;
+    check(!f.depth_hit(50.0, 50.0, 100.0, 100.0, &h), "no hit where the depth is unknown");
+    f.depth.data = null;
+    check(!f.depth_hit(50.0, 50.0, 100.0, 100.0, &h), "no hit without depth");
+}
+
 int main() {
     layout();
     bad_frames();
     hook();
+    depth_hits();
     printf("PASS session\n");
     return 0;
 }

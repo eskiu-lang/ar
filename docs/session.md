@@ -123,6 +123,12 @@ if (n > 0) {
 `ArFrame_hit_test` casts the ray under the point against the planes found so far (inside their
 outline: `AR_HIT_PLANES`) and estimates (`AR_HIT_ESTIMATED`: ARKit's estimated planes,
 ARCore's feature and depth points), nearest first. `ar_hit_test_ray` takes a ray of your own.
+
+`ArFrame_depth_hit(x, y, width, height, &hit)` hits the depth image instead (`ArOptions.depth`
+or `people`): the real surface under the point whether a plane was found there or not (a
+sofa, a step, a person), with `kind` `AR_HIT_DEPTH`, its distance and a pose at the point
+whose y axis is the surface's normal, estimated from the depth around it and turned toward
+the camera. It is false where the depth is unknown.
 Each `ArHit` has the distance, the kind, the plane's id and the pose (y along the surface's
 normal).
 
