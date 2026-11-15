@@ -102,7 +102,9 @@ struct ArImageTarget {
 // the TrueDepth calls so an app without it passes App Store review guideline 2.5.1, and the
 // session reports "unsupported" without it; on Android it is ARCore's Augmented Faces.
 // `body` tracks people's bodies on the rear camera (frame.bodies, ARKit's body tracking;
-// iOS on A12 or later).
+// iOS on A12 or later). `autofocus` false keeps the camera's focus fixed, and
+// `world_alignment` (ArAlign*) sets the world's axes (ViroReact's autofocus and
+// worldAlignment).
 struct ArOptions {
     bool horizontal = true;
     bool vertical = false;
@@ -126,7 +128,16 @@ struct ArOptions {
     *ArImageTarget images;
     int image_count;
     int tracked_images = 1;
+    bool autofocus = true;
+    int world_alignment = 0;
 }
+
+// How the session's world axes are set (ArOptions.world_alignment; ViroReact's
+// worldAlignment, ARKit's): Y up with gravity; also -Z toward true north (iOS; Android keeps
+// gravity); or the camera's axes at the start (iOS).
+const int ArAlignGravity = 0;
+const int ArAlignGravityAndHeading = 1;
+const int ArAlignCamera = 2;
 
 // One plane of the camera picture: `data` (borrowed for the handler's call), the bytes from
 // one row to the next, from one sample to the next in a row, and the bytes readable from

@@ -731,6 +731,10 @@ void faces_bodies() {
     ar_frame_fill(&f, 0);
     check(f.face_count == 0 && f.body_count == 0, "no faces or bodies unless asked");
     check((ar_flags(ArOptions{front_camera: true, body: true}) & (AR_FLAG_FRONT | AR_FLAG_BODY)) == (AR_FLAG_FRONT | AR_FLAG_BODY), "the front and body flags");
+    check((ar_flags(ArOptions{}) & (AR_FLAG_FIXED_FOCUS | AR_FLAG_HEADING | AR_FLAG_CAMERA_ALIGN)) == 0, "autofocus and gravity by default");
+    check((ar_flags(ArOptions{autofocus: false, world_alignment: ArAlignGravityAndHeading}) & (AR_FLAG_FIXED_FOCUS | AR_FLAG_HEADING)) ==
+        (AR_FLAG_FIXED_FOCUS | AR_FLAG_HEADING), "the fixed focus and heading flags");
+    check((ar_flags(ArOptions{world_alignment: ArAlignCamera}) & AR_FLAG_CAMERA_ALIGN) != 0, "the camera alignment flag");
     ar_frame_fill(&f, AR_FLAG_FRONT | AR_FLAG_BODY);
     check(f.face_count == 1 && f.faces[0].id == 5 && f.faces[0].pose.m[14] == (float)-0.3, "the face with a mesh, the other skipped");
     check(f.faces[0].vertex(1).x == (float)0.02 && f.faces[0].index(2) == 2 && f.faces[0].triangle_count == 1, "its mesh");

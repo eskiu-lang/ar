@@ -72,6 +72,11 @@ const int AR_FLAG_OBJECTS = 16384;
 // The front camera with face tracking, and body tracking.
 const int AR_FLAG_FRONT = 32768;
 const int AR_FLAG_BODY = 65536;
+// Fixed focus (ArOptions.autofocus false), and the world's alignment with the heading or the
+// camera (ArOptions.world_alignment, iOS).
+const int AR_FLAG_FIXED_FOCUS = 131072;
+const int AR_FLAG_HEADING = 262144;
+const int AR_FLAG_CAMERA_ALIGN = 524288;
 
 // Values ar_native_face fills: id, the pose's 16 values, the mesh (vertex pointer, vertex
 // count, texture coordinate pointer, index pointer, triangle count, index bytes), 52 blend
@@ -149,6 +154,9 @@ int ar_flags(ArOptions options) {
     if (options.objects != null && options.object_count > 0) { flags |= AR_FLAG_OBJECTS; }
     if (options.front_camera) { flags |= AR_FLAG_FRONT; }
     if (options.body) { flags |= AR_FLAG_BODY; }
+    if (!options.autofocus) { flags |= AR_FLAG_FIXED_FOCUS; }
+    if (options.world_alignment == ArAlignGravityAndHeading) { flags |= AR_FLAG_HEADING; }
+    if (options.world_alignment == ArAlignCamera) { flags |= AR_FLAG_CAMERA_ALIGN; }
     if (options.points) { flags |= AR_FLAG_POINTS; }
     if (options.light_hdr) { flags |= AR_FLAG_LIGHT_HDR; }
     if (options.images != null && options.image_count > 0) { flags |= AR_FLAG_IMAGES; }

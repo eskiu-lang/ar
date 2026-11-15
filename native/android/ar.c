@@ -53,6 +53,7 @@ static int loadArcore(void) {
 #define FLAG_GEO 4096
 #define FLAG_SEMANTICS 8192
 #define FLAG_FRONT 32768
+#define FLAG_FIXED_FOCUS 131072
 #define MAX_FACES 3
 #define MAX_IMAGES 100
 

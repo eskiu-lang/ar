@@ -232,6 +232,10 @@ static bool runConfiguration(void) {
     if (sessionFlags & 2) planes |= ARPlaneDetectionVertical;
     config.planeDetection = planes;
     config.lightEstimationEnabled = (sessionFlags & (4 | 32)) != 0;
+    // autofocus off (131072); the world aligned with the heading (262144) or the camera (524288)
+    config.autoFocusEnabled = (sessionFlags & 131072) == 0;
+    config.worldAlignment = (sessionFlags & 262144) ? ARWorldAlignmentGravityAndHeading
+                            : (sessionFlags & 524288) ? ARWorldAlignmentCamera : ARWorldAlignmentGravity;
     ARFrameSemantics semantics = ARFrameSemanticNone;
     if ((sessionFlags & 8) && [ARWorldTrackingConfiguration supportsFrameSemantics:ARFrameSemanticSceneDepth]) {
         semantics |= ARFrameSemanticSceneDepth;

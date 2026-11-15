@@ -171,6 +171,8 @@ struct ArOptions {
     *ArImageTarget images;
     int image_count;
     int tracked_images = 1;
+    bool autofocus = true;
+    int world_alignment = 0;
 }
 ```
 
@@ -194,7 +196,10 @@ ViroReact's frontCameraEnabled): on iOS it needs the eskiu-lang/face package, wh
 the TrueDepth calls so an app without it passes App Store review guideline 2.5.1, and the
 session reports "unsupported" without it; on Android it is ARCore's Augmented Faces.
 `body` tracks people's bodies on the rear camera (frame.bodies, ARKit's body tracking;
-iOS on A12 or later).
+iOS on A12 or later). `autofocus` false keeps the camera's focus fixed (both platforms), and
+`world_alignment` sets the world's axes: `ArAlignGravity` (Y up), `ArAlignGravityAndHeading`
+(also -Z toward true north, iOS) or `ArAlignCamera` (the camera's axes at the start, iOS);
+ViroReact's autofocus and worldAlignment.
 
 ### ArImagePlane
 

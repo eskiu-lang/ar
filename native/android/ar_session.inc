@@ -179,7 +179,8 @@ static int configure(void) {
     p_ArConfig_create(session, &config);
     p_ArConfig_setTextureUpdateMode(session, config, AR_TEXTURE_UPDATE_MODE_EXPOSE_HARDWARE_BUFFER_);
     p_ArConfig_setUpdateMode(session, config, AR_UPDATE_MODE_LATEST_CAMERA_IMAGE_);
-    p_ArConfig_setFocusMode(session, config, AR_FOCUS_MODE_AUTO_);
+    // fixed focus when autofocus is off (ArOptions.autofocus)
+    p_ArConfig_setFocusMode(session, config, (flags & FLAG_FIXED_FOCUS) ? AR_FOCUS_MODE_FIXED_ : AR_FOCUS_MODE_AUTO_);
     // Augmented Faces takes no planes and only the ambient light estimate (as Viro sets it)
     int front = (flags & FLAG_FRONT) != 0;
     p_ArConfig_setPlaneFindingMode(session, config, front ? 0 : flags & (FLAG_HORIZONTAL | FLAG_VERTICAL));
