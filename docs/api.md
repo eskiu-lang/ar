@@ -173,6 +173,8 @@ struct ArOptions {
     int tracked_images = 1;
     bool autofocus = true;
     int world_alignment = 0;
+    float depth_model_scale = 1.0;
+    int depth_model_fps = 5;
 }
 ```
 
@@ -199,7 +201,19 @@ session reports "unsupported" without it; on Android it is ARCore's Augmented Fa
 iOS on A12 or later). `autofocus` false keeps the camera's focus fixed (both platforms), and
 `world_alignment` sets the world's axes: `ArAlignGravity` (Y up), `ArAlignGravityAndHeading`
 (also -Z toward true north, iOS) or `ArAlignCamera` (the camera's axes at the start, iOS);
-ViroReact's autofocus and worldAlignment.
+ViroReact's autofocus and worldAlignment. `depth_model_scale` multiplies the depth model's
+distances (a calibration: under 1 when it sees things too far) and `depth_model_fps` caps how
+often it runs a second (the device's thermal state lowers it: fair 3, serious 2, critical
+none); ViroReact's monocularDepthScale and monocularDepthTargetFPS.
+
+### ar_depth_supported
+
+```eskiu
+int ar_depth_supported()
+```
+
+Whether the device gives depth: 1 yes (a LiDAR sensor, or a depth model given, on iOS;
+ARCore's Depth API on Android), 0 no, -1 not known yet (Android, before a session runs).
 
 ### ArImagePlane
 

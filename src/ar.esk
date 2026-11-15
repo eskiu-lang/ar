@@ -104,7 +104,9 @@ struct ArImageTarget {
 // `body` tracks people's bodies on the rear camera (frame.bodies, ARKit's body tracking;
 // iOS on A12 or later). `autofocus` false keeps the camera's focus fixed, and
 // `world_alignment` (ArAlign*) sets the world's axes (ViroReact's autofocus and
-// worldAlignment).
+// worldAlignment). `depth_model_scale` multiplies the depth model's distances (a calibration:
+// under 1 when it sees things too far), and `depth_model_fps` is how many times a second at
+// most it runs (the device's thermal state lowers it: fair 3, serious 2, critical none).
 struct ArOptions {
     bool horizontal = true;
     bool vertical = false;
@@ -130,6 +132,8 @@ struct ArOptions {
     int tracked_images = 1;
     bool autofocus = true;
     int world_alignment = 0;
+    float depth_model_scale = 1.0;
+    int depth_model_fps = 5;
 }
 
 // How the session's world axes are set (ArOptions.world_alignment; ViroReact's

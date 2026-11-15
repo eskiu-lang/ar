@@ -246,6 +246,15 @@ void ar_native_depth_model(string path) {
     models_sent++;
 }
 
+int ar_native_depth_supported() { return 1; }
+
+float model_scale_sent;
+int model_fps_sent;
+void ar_native_depth_model_tuning(float scale, int fps) {
+    model_scale_sent = scale;
+    model_fps_sent = fps;
+}
+
 int ar_native_depth(*int64 info) {
     info[0] = 4;
     info[1] = 4;
@@ -642,6 +651,10 @@ void depth_model() {
     models_sent = 0;
     ar_send_depth_model(ArOptions{depth: true, depth_model: "/models/depth.mlmodelc"});
     check(models_sent == 1 && strcmp(model_sent.data, "/models/depth.mlmodelc") == 0, "the model's path sent");
+    check(model_scale_sent == 1.0 && model_fps_sent == 5, "the model's default scale and rate sent");
+    ar_send_depth_model(ArOptions{depth: true, depth_model: "/models/depth.mlmodelc", depth_model_scale: 0.8, depth_model_fps: 3});
+    check(model_scale_sent > 0.79 && model_scale_sent < 0.81 && model_fps_sent == 3, "the model's scale and rate sent");
+    models_sent = 1;
     ar_send_depth_model(ArOptions{depth: true});
     check(models_sent == 1, "nothing sent without a model");
     check(ar_same_path(null, "") && !ar_same_path("a", null) && ar_same_path("a", "a"), "paths compared");

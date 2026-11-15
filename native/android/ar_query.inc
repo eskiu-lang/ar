@@ -24,6 +24,15 @@ static Snapshot *lentSnapshot(void) { return lent >= 0 ? &snapshots[lent] : NULL
 // ARCore has no reconstruction mesh (its depth is in ar_native_depth).
 // ARCore's Depth API gives depth without a sensor, so no depth model runs here.
 void ar_native_depth_model(const char *path) { (void)path; }
+void ar_native_depth_model_tuning(float scale, int fps) { (void)scale; (void)fps; }
+
+// 1 when the device gives depth (ARCore's Depth API), 0 when not, -1 before a session says.
+int ar_native_depth_supported(void) {
+    if (!session) return -1;
+    int32_t ok = 0;
+    p_ArSession_isDepthModeSupported(session, AR_DEPTH_MODE_AUTOMATIC_, &ok);
+    return ok ? 1 : 0;
+}
 // ARCore has no object detection: no targets load and none are found.
 void ar_native_objects(int count) { (void)count; }
 int ar_native_object_add(int index, const char *path) { (void)index; (void)path; return 0; }

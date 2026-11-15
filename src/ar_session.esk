@@ -163,7 +163,14 @@ void ar_send_depth_model(ArOptions options) {
     bool owned;
     string path = ar_image_path(options.depth_model, &owned);
     ar_native_depth_model(path);
+    ar_native_depth_model_tuning(options.depth_model_scale > 0.0 ? options.depth_model_scale : 1.0, options.depth_model_fps);
     if (owned) { free((*void)path); }
+}
+
+// Whether the device gives depth: 1 yes (a LiDAR sensor or a depth model on iOS, ARCore's
+// Depth API on Android), 0 no, -1 not known yet (Android, before a session runs).
+int ar_depth_supported() {
+    return ar_native_depth_supported();
 }
 
 // True when a and b name the same file (both null or empty, or equal).

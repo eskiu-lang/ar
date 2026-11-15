@@ -15,6 +15,21 @@ static float *modelWork;
 static size_t modelSize;
 static int modelW, modelH;
 static int modelReady;
+// ArOptions.depth_model_scale and depth_model_fps, and when the model last started
+static float modelScale = 1.0f;
+static int modelFps = 5;
+static CFAbsoluteTime modelStarted;
+
+// 1 when the device gives depth: a LiDAR sensor, or a depth model given (ArOptions.depth_model).
+int ar_native_depth_supported(void) {
+    if ([ARWorldTrackingConfiguration supportsFrameSemantics:ARFrameSemanticSceneDepth]) return 1;
+    return modelPath != nil && [NSFileManager.defaultManager fileExistsAtPath:modelPath] ? 1 : 0;
+}
+
+void ar_native_depth_model_tuning(float scale, int fps) {
+    modelScale = scale > 0.0f ? scale : 1.0f;
+    modelFps = fps > 0 ? fps : 5;
+}
 
 void ar_native_depth_model(const char *path) {
     NSString *p = path ? [NSString stringWithUTF8String:path] : nil;
@@ -116,6 +131,17 @@ static int readModelOutput(MLMultiArray *a, CGImagePropertyOrientation orientati
 // Starts the model on the lent picture unless it is busy with another.
 static void runModel(void) {
     if (!depthModel || !lent || atomic_load(&modelBusy)) return;
+    // at most depth_model_fps runs a second, fewer as the device heats up (none when critical)
+    int fps = modelFps;
+    switch (NSProcessInfo.processInfo.thermalState) {
+        case NSProcessInfoThermalStateFair: fps = fps < 3 ? fps : 3; break;
+        case NSProcessInfoThermalStateSerious: fps = fps < 2 ? fps : 2; break;
+        case NSProcessInfoThermalStateCritical: return;
+        default: break;
+    }
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (now - modelStarted < 1.0 / fps) return;
+    modelStarted = now;
     atomic_store(&modelBusy, 1);
     CVPixelBufferRef image = CVPixelBufferRetain(lent.capturedImage);
     CGImagePropertyOrientation orientation;
@@ -164,6 +190,9 @@ static int lendModel(int64_t *info) {
         lentModelSize = n;
     }
     memcpy(lentModel, modelDepth, n * sizeof(float));
+    if (modelScale != 1.0f) {
+        for (size_t i = 0; i < n; i++) lentModel[i] *= modelScale;
+    }
     int w = modelW, h = modelH;
     os_unfair_lock_unlock(&modelLock);
     info[0] = w;

@@ -129,6 +129,8 @@ mergeInto(LibraryManager.library, {
   },
   ar_native_image_state: function(index) { return window.eskiuAr ? window.eskiuAr.imageState(index) : 2; },
   ar_native_depth_model: function(path) {},
+  ar_native_depth_model_tuning: function(scale, fps) {},
+  ar_native_depth_supported: function() { return 0; },
   ar_native_cloud_host: function(anchor, ttl) { return 0; },
   ar_native_cloud_resolve: function(id) { return 0; },
   ar_native_earth_anchor: function(lat, lng, alt, q) { return 0; },

@@ -25,6 +25,8 @@ extern int ar_native_points(*float out, int max_points);
 extern int ar_native_light(*double info);
 extern int ar_native_depth(*int64 info);
 extern void ar_native_depth_model(string path);
+extern void ar_native_depth_model_tuning(float scale, int fps);
+extern int ar_native_depth_supported();
 extern double ar_native_cloud_host(double anchor, int ttl_days);
 extern double ar_native_cloud_resolve(string cloud_id);
 extern double ar_native_earth_anchor(double lat, double lng, double alt, *float quaternion);
