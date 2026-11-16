@@ -1188,6 +1188,16 @@ int ar_depth_supported()
 Whether the device gives depth: 1 yes (a LiDAR sensor or a depth model on iOS, ARCore's
 Depth API on Android), 0 no, -1 not known yet (Android, before a session runs).
 
+### ar_supported
+
+```eskiu
+int ar_supported()
+```
+
+Whether the device runs AR: 1 yes (ARKit's world tracking; ARCore supported, installed or
+installable), 0 no (or no ARCore in the app), 2 not known yet (ARCore still checking), 3
+unknown (ARCore's check failed).
+
 ### ar_semantics_supported
 
 ```eskiu

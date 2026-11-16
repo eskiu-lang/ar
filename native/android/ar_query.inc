@@ -33,6 +33,21 @@ int ar_native_depth_supported(void) {
     p_ArSession_isDepthModeSupported(session, AR_DEPTH_MODE_AUTOMATIC_, &ok);
     return ok ? 1 : 0;
 }
+// ARCore's availability on this device: 1 supported (installed, or installable), 0 not (or
+// no ARCore in the APK), 2 still checking, 3 unknown.
+int ar_native_supported(void) {
+    if (!loadArcore()) return 0;
+    JNIEnv *env = ui_jni_env();
+    jobject activity = ui_activity();
+    if (!env || !activity) return 3;
+    ArAvailability availability = 0;
+    p_ArCoreApk_checkAvailability(env, activity, &availability);
+    if (availability >= 200) return 1;
+    if (availability == AR_AVAILABILITY_UNSUPPORTED_DEVICE_NOT_CAPABLE_) return 0;
+    if (availability == 1) return 2;
+    return 3;
+}
+
 // 1 when ARCore gives scene semantics on this device, 0 when not, -1 before a session says.
 int ar_native_semantics_supported(void) {
     if (!session) return -1;

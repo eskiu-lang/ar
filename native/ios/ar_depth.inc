@@ -20,6 +20,11 @@ static float modelScale = 1.0f;
 static int modelFps = 5;
 static CFAbsoluteTime modelStarted;
 
+// 1 when the device runs ARKit's world tracking, else 0.
+int ar_native_supported(void) {
+    return ARWorldTrackingConfiguration.isSupported ? 1 : 0;
+}
+
 // 1 when the device gives depth: a LiDAR sensor, or a depth model given (ArOptions.depth_model).
 int ar_native_depth_supported(void) {
     if ([ARWorldTrackingConfiguration supportsFrameSemantics:ARFrameSemanticSceneDepth]) return 1;
