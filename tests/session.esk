@@ -247,6 +247,15 @@ void ar_native_depth_model(string path) {
 }
 
 int ar_native_depth_supported() { return 1; }
+int ar_native_supported() { return 1; }
+int ar_native_semantics_supported() { return -1; }
+
+// What the device supports comes from the host as it is.
+void supported() {
+    check(ar_supported() == 1, "ar_supported is the host's answer");
+    check(ar_depth_supported() == 1, "ar_depth_supported is the host's answer");
+    check(ar_semantics_supported() == -1, "ar_semantics_supported is the host's answer");
+}
 
 float model_scale_sent;
 int model_fps_sent;
@@ -782,6 +791,7 @@ int main() {
     objects();
     faces_bodies();
     meshes();
+    supported();
     printf("PASS session\n");
     return 0;
 }
