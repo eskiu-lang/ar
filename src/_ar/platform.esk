@@ -1,4 +1,4 @@
-// ar_platform.esk: the platform's side and reading what it reports into frames (part of ar.esk, which imports it in order after the ones before it)
+// _ar/platform.esk: the platform's side and reading what it reports into frames (part of ar.esk, which imports it in order after the ones before it)
 
 // The platform's side (native/ios, native/android, native/web). ar_native_session starts the
 // session (`on` 1, with the option flags and the picture size wished for) or stops it;

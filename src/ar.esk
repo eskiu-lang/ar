@@ -523,5 +523,5 @@ struct ArFrame {
     int body_count;
 }
 
-import "ar_platform.esk";
-import "ar_session.esk";
+import "_ar/platform.esk";
+import "_ar/session.esk";

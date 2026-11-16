@@ -7,7 +7,10 @@
 Run from the package root (the directory holding eskiu.toml). Every top-level public
 declaration of src/*.esk (a name not starting with `_`, not `extern` or `intrinsic`) is
 listed under its module with the comment block right above it: functions, structs,
-unions, interfaces, enums, type aliases and constants. The comment at the top of a file
+unions, interfaces, enums, type aliases and constants.
+A module's parts live in its private directory (`src/_module/`, imported with
+`import "_module/part.esk";`): they are not modules of their own, their declarations are listed
+under the module, in the place of the import. The comment at the top of a file
 describes its module. Lines of a comment indented by four or more spaces are code.
 Files listed in API_SKIP (generated bindings) are left out.
 """
@@ -22,6 +25,12 @@ TYPE_RE = re.compile(r"^type\s+([A-Za-z_]\w*)\s*=")
 CONST_RE = re.compile(r"^const\s+.*?\b([A-Za-z_]\w*)\s*(\[[^\]]*\])?\s*=")
 FN_RE = re.compile(r"^(?:export\s+|must_use\s+|async\s+|deprecated\s*\([^)]*\)\s*)*"
                    r"[\w<>,\*\[\]\s?]+?[\s\*]([A-Za-z_]\w*)\s*(?:<[^>()]*>)?\s*\(")
+PART_RE = re.compile(r'^import\s+"([^"]+\.esk)"\s*;')
+
+
+def private(rel):
+    # a path inside a module's private directory (a component starting with `_`)
+    return any(c.startswith("_") for c in os.path.normpath(rel).split(os.sep)[:-1])
 OP_RE = re.compile(r"^[\w<>,\*\[\]\s]+?\boperator\s*(\S+?)\s*\(")
 
 
@@ -231,6 +240,13 @@ def parse(path):
             comment.append(line)
             i += 1
             continue
+        part = PART_RE.match(line)
+        if part and private(os.path.relpath(os.path.normpath(os.path.join(os.path.dirname(path), part.group(1))), "src")):
+            # a part of this module: its declarations are listed here, where it is imported
+            items += parse(os.path.join(os.path.dirname(path), part.group(1)))[1]
+            comment = []
+            i += 1
+            continue
         if line.strip() == "" or line.startswith("#") or line.startswith("import ") \
                 or line[:1].isspace() or line.startswith("}"):
             if line.strip() == "" or line.startswith("import "):
@@ -330,6 +346,14 @@ def build():
             if n.endswith(".esk") and n not in API_SKIP and not n.startswith("_"):
                 files.append(os.path.relpath(os.path.join(root, n), "src"))
     files.sort()
+    parts = set()
+    for f in files:
+        with open(os.path.join("src", f), encoding="utf-8") as fh:
+            for line in fh:
+                m = PART_RE.match(line)
+                if m and private(os.path.normpath(os.path.join(os.path.dirname(f), m.group(1)))):
+                    parts.add(os.path.normpath(os.path.join(os.path.dirname(f), m.group(1))))
+    files = [f for f in files if f not in parts and not private(f)]
     main = [f for f in files if os.path.splitext(f)[0] in (pkg, "lib")]
     files = main + [f for f in files if f not in main]
     out = [f"# {pkg} API reference", "",

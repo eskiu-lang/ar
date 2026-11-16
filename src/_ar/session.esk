@@ -1,4 +1,4 @@
-// ar_session.esk: cloud anchors and Earth, image targets, depth, the display transform and frame delivery (part of ar.esk, which imports it in order after the ones before it)
+// _ar/session.esk: cloud anchors and Earth, image targets, depth, the display transform and frame delivery (part of ar.esk, which imports it in order after the ones before it)
 
 // --- cloud anchors and Earth (ARCore, Android) ---
 
@@ -138,6 +138,8 @@ int64 ar_images_key(*ArImageTarget images, int count) {
 fn(string)->string ar_asset_resolver;
 bool ar_has_asset_resolver = false;
 
+// Sets how a relative target path becomes the app's asset (ar_asset_resolver): `resolver` gets
+// the path and returns an allocated path, or null when the app has no such asset.
 void ar_set_asset_resolver(escaping fn(string)->string resolver) {
     ar_asset_resolver = resolver;
     ar_has_asset_resolver = true;
