@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/eskiu-lang/ar/actions/workflows/ci.yml"><img src="https://github.com/eskiu-lang/ar/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/version-0.1.0-6448d4" alt="Version 0.1.0">
+  <img src="https://img.shields.io/badge/version-0.2.0-6448d4" alt="Version 0.2.0">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
 </p>
 
@@ -55,7 +55,7 @@ void World() {
 ## Install
 
 ```bash
-eskiuc add ar --git https://github.com/eskiu-lang/ar --rev v0.1.0
+eskiuc add ar --git https://github.com/eskiu-lang/ar --rev v0.2.0
 ```
 
 ## License

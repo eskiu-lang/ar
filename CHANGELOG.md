@@ -3,7 +3,7 @@
 All notable changes to this package are documented in this file. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.2.0] - 2026-11-16
 
 ### Added
 
@@ -38,8 +38,31 @@ All notable changes to this package are documented in this file. The format is b
 - `ArPlane.classification` (`ArPlaneClass`): floor, table, wall, ceiling, seat, window or
   door, from ARKit's plane classification and WebXR's semantic labels (ARCore does not
   classify).
+- What the device supports, before or without a session: `ar_supported` (ARKit's world
+  tracking; ARCore supported, installed or installable), `ar_depth_supported` and
+  `ar_semantics_supported`.
+- `ArOptions.autofocus` (false keeps the focus fixed) and `ArOptions.world_alignment`
+  (`ArAlignGravity`, `ArAlignGravityAndHeading`, `ArAlignCamera`), ViroReact's autofocus and
+  worldAlignment.
+- `ArOptions.depth_model_scale` calibrates the depth model's distances and
+  `depth_model_fps` caps how often it runs (the device's thermal state lowers it).
+- A host without eskiu-lang/ui runs a session with `ar_session_start` and `ar_poll_frame`,
+  and resolves asset paths with `ar_set_asset_resolver`.
 
-## [0.1.0] - 2026-11-07
+### Changed
+
+- The ui hooks `use_ar_session` and `use_ar_status` moved to `<ar/ui>`: an app that uses
+  them imports `<ar/ui>`. `<ar>` itself no longer needs eskiu-lang/ui's hooks.
+- Depends on ui 0.6.0.
+- The sources are split by topic, with the module's parts in `src/_ar/` and the native
+  hosts in included parts. No API change beyond `<ar/ui>`.
+
+### Fixed
+
+- iOS: Earth anchors start once the location permission is granted, not before.
+- Android: a session says why when geospatial mode or the configuration fails.
+
+## [0.1.0]
 
 ### Added
 
