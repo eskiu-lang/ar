@@ -1,7 +1,7 @@
 # Drawing the camera and the world
 
 The package draws nothing: an AR app draws the camera picture as the background and its own
-content over it, with [eskiu-gpu](https://github.com/eskiu-lang/gpu). `ArFrame.image` has the
+content over it, with [eskiu-gpu](https://github.com/eskiu-packages/gpu). `ArFrame.image` has the
 field layout of ui-camera's `CameraFrame` and eskiu-gpu's `GpuYuvImage`, so `<gpu/yuv>`
 uploads it by pointer, with no copy and no conversion on the CPU, and turns the YUV into RGB
 in a shader.

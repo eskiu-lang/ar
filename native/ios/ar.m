@@ -152,7 +152,7 @@ static ARVideoFormat *videoFormat(NSArray<ARVideoFormat *> *formats, int width, 
 
 void ar_native_frame_release(void);
 
-// The front camera's face tracking, from the eskiu-lang/face package (face_install), so the
+// The front camera's face tracking, from the eskiu-packages/face package (face_install), so the
 // TrueDepth calls stay out of apps that do not use them (App Store guideline 2.5.1).
 typedef struct {
     ARConfiguration *(*configuration)(int flags, int width, int height);

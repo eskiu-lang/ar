@@ -1,6 +1,6 @@
-// The AR session as eskiu-lang/ui hooks: use_ar_session runs a session while a scope is
+// The AR session as eskiu-packages/ui hooks: use_ar_session runs a session while a scope is
 // mounted and hands it frames on the UI thread, use_ar_status reports the session's status.
-// <ar> itself does not need eskiu-lang/ui (ar_session_start and ar_poll_frame drive a session
+// <ar> itself does not need eskiu-packages/ui (ar_session_start and ar_poll_frame drive a session
 // from any host).
 import <mem>;
 import <list>;

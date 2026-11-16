@@ -9,7 +9,7 @@ All notable changes to this package are documented in this file. The format is b
 
 - Front camera with face tracking (ViroReact's `frontCameraEnabled`): `ArOptions.front_camera`,
   `frame.faces` (`ArFace`: pose, mesh, 52 blend shapes and eyes on iOS, region poses on
-  Android). Android uses ARCore's Augmented Faces; iOS needs the eskiu-lang/face package
+  Android). Android uses ARCore's Augmented Faces; iOS needs the eskiu-packages/face package
   (`face_install`), which holds the TrueDepth calls (App Store guideline 2.5.1).
 - Body tracking on iOS: `ArOptions.body`, `frame.bodies` (`ArBody`, ARKit's 91 joints),
   `ar_body_joint`.
@@ -46,13 +46,13 @@ All notable changes to this package are documented in this file. The format is b
   worldAlignment.
 - `ArOptions.depth_model_scale` calibrates the depth model's distances and
   `depth_model_fps` caps how often it runs (the device's thermal state lowers it).
-- A host without eskiu-lang/ui runs a session with `ar_session_start` and `ar_poll_frame`,
+- A host without eskiu-packages/ui runs a session with `ar_session_start` and `ar_poll_frame`,
   and resolves asset paths with `ar_set_asset_resolver`.
 
 ### Changed
 
 - The ui hooks `use_ar_session` and `use_ar_status` moved to `<ar/ui>`: an app that uses
-  them imports `<ar/ui>`. `<ar>` itself no longer needs eskiu-lang/ui's hooks.
+  them imports `<ar/ui>`. `<ar>` itself no longer needs eskiu-packages/ui's hooks.
 - Depends on ui 0.6.0.
 - The sources are split by topic, with the module's parts in `src/_ar/` and the native
   hosts in included parts. No API change beyond `<ar/ui>`.

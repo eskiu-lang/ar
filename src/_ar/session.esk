@@ -134,7 +134,7 @@ int64 ar_images_key(*ArImageTarget images, int count) {
 }
 
 // How a relative target path becomes the app's asset (an allocated path, or null when there
-// is no such asset): <ar/ui> sets ui_asset_path; a host without eskiu-lang/ui may set its own.
+// is no such asset): <ar/ui> sets ui_asset_path; a host without eskiu-packages/ui may set its own.
 fn(string)->string ar_asset_resolver;
 bool ar_has_asset_resolver = false;
 
@@ -452,7 +452,7 @@ void ar_deliver_frame(fn(*ArFrame)->void handler) {
 }
 
 // Starts the world-tracking session with options, for a host that drives it itself (the
-// hooks in <ar/ui> do this for an eskiu-lang/ui app); ar_poll_frame then hands it frames.
+// hooks in <ar/ui> do this for an eskiu-packages/ui app); ar_poll_frame then hands it frames.
 void ar_session_start(ArOptions options) {
     int flags = ar_flags(options);
     ar_send_depth_model(options);

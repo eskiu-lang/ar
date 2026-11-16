@@ -3,11 +3,11 @@
 </p>
 
 <h2 align="center">ar</h2>
-<p align="center">Augmented reality for apps on eskiu-lang/ui: ARKit on iOS, ARCore on Android, WebXR on the web.</p>
+<p align="center">Augmented reality for apps on eskiu-packages/ui: ARKit on iOS, ARCore on Android, WebXR on the web.</p>
 <p align="center"><sub>Part of the <a href="https://github.com/eskiu-lang">Eskiu</a> project</sub></p>
 
 <p align="center">
-  <a href="https://github.com/eskiu-lang/ar/actions/workflows/ci.yml"><img src="https://github.com/eskiu-lang/ar/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/eskiu-packages/ar/actions/workflows/ci.yml"><img src="https://github.com/eskiu-packages/ar/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/version-0.2.0-6448d4" alt="Version 0.2.0">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
 </p>
@@ -55,7 +55,7 @@ void World() {
 ## Install
 
 ```bash
-eskiuc add ar --git https://github.com/eskiu-lang/ar --rev v0.2.0
+eskiuc add ar --git https://github.com/eskiu-packages/ar --rev v0.2.0
 ```
 
 ## License

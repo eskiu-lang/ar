@@ -1,4 +1,4 @@
-// <ar>: augmented reality for apps on eskiu-lang/ui, over ARKit on iOS and ARCore on
+// <ar>: augmented reality for apps on eskiu-packages/ui, over ARKit on iOS and ARCore on
 // Android. use_ar_session runs a world-tracking session while its scope is mounted and hands
 // each new frame to Eskiu on the UI thread: the camera picture as YUV planes (the layout of
 // ui-camera's CameraFrame, which eskiu-gpu's <gpu/yuv> draws), the camera's pose and
@@ -98,7 +98,7 @@ struct ArImageTarget {
 // `tracked_images` as they move (the others keep the pose where they were last seen; ARCore
 // follows every one). The targets are copied when they change: a new array, count or field.
 // `front_camera` runs the session on the front camera with face tracking (frame.faces;
-// ViroReact's frontCameraEnabled): on iOS it needs the eskiu-lang/face package, which holds
+// ViroReact's frontCameraEnabled): on iOS it needs the eskiu-packages/face package, which holds
 // the TrueDepth calls so an app without it passes App Store review guideline 2.5.1, and the
 // session reports "unsupported" without it; on Android it is ARCore's Augmented Faces.
 // `body` tracks people's bodies on the rear camera (frame.bodies, ARKit's body tracking;

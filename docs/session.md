@@ -46,7 +46,7 @@ new session.
 `front_camera` runs the session on the front camera with face tracking, ViroReact's
 `frontCameraEnabled`. On Android it is ARCore's Augmented Faces (no planes, the ambient light
 estimate only, no cloud anchors, as Viro sets it). On iOS the TrueDepth calls live in the
-eskiu-lang/face package, as ReactVision's react-viro-face-tracking keeps them out of ViroKit:
+eskiu-packages/face package, as ReactVision's react-viro-face-tracking keeps them out of ViroKit:
 Apple's review (guideline 2.5.1) scans a binary for them, so an app that does not use the
 front camera must not carry them. Import `<face>` and call `face_install()` once before the
 session starts; without it the session reports "unsupported" on iOS. `body` tracks a person
