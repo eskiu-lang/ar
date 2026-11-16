@@ -1188,6 +1188,15 @@ int ar_depth_supported()
 Whether the device gives depth: 1 yes (a LiDAR sensor or a depth model on iOS, ARCore's
 Depth API on Android), 0 no, -1 not known yet (Android, before a session runs).
 
+### ar_semantics_supported
+
+```eskiu
+int ar_semantics_supported()
+```
+
+Whether the device gives scene semantics (ARCore's Scene Semantics API, on Android and on
+iOS with the ARCoreSemantics pod): 1 yes, 0 no, -1 not known yet (before a session runs).
+
 ### ar_same_path
 
 ```eskiu

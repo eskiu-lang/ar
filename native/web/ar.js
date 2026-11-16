@@ -138,6 +138,7 @@ mergeInto(LibraryManager.library, {
   ar_native_job: function(job, info, text, cap) { return 3; },
   ar_native_earth: function(info) { return 0; },
   ar_native_semantics: function(info) { return 0; },
+  ar_native_semantics_supported: function() { return 0; },
   ar_native_vps_check: function(lat, lng) { return 0; },
   ar_native_objects: function(count) {},
   ar_native_object_add: function(index, path) { return 0; },

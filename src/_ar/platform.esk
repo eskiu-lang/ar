@@ -34,6 +34,7 @@ extern double ar_native_earth_resolve(int rooftop, double lat, double lng, doubl
 extern int ar_native_job(double job, *double info, *char text, int capacity);
 extern int ar_native_earth(*double info);
 extern int ar_native_semantics(*int64 info);
+extern int ar_native_semantics_supported();
 extern double ar_native_vps_check(double lat, double lng);
 extern void ar_native_objects(int count);
 extern int ar_native_object_add(int index, string path);

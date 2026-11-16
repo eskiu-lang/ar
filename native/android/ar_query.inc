@@ -33,6 +33,14 @@ int ar_native_depth_supported(void) {
     p_ArSession_isDepthModeSupported(session, AR_DEPTH_MODE_AUTOMATIC_, &ok);
     return ok ? 1 : 0;
 }
+// 1 when ARCore gives scene semantics on this device, 0 when not, -1 before a session says.
+int ar_native_semantics_supported(void) {
+    if (!session) return -1;
+    int32_t ok = 0;
+    p_ArSession_isSemanticModeSupported(session, AR_SEMANTIC_MODE_ENABLED_, &ok);
+    return ok ? 1 : 0;
+}
+
 // ARCore has no object detection: no targets load and none are found.
 void ar_native_objects(int count) { (void)count; }
 int ar_native_object_add(int index, const char *path) { (void)index; (void)path; return 0; }

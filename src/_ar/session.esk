@@ -175,6 +175,12 @@ int ar_depth_supported() {
     return ar_native_depth_supported();
 }
 
+// Whether the device gives scene semantics (ARCore's Scene Semantics API, on Android and on
+// iOS with the ARCoreSemantics pod): 1 yes, 0 no, -1 not known yet (before a session runs).
+int ar_semantics_supported() {
+    return ar_native_semantics_supported();
+}
+
 // True when a and b name the same file (both null or empty, or equal).
 bool ar_same_path(string a, string b) {
     bool ae = a == null || a[0] == 0;

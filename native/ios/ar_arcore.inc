@@ -273,6 +273,17 @@ int ar_native_earth(double *info) {
 #endif
 }
 
+// 1 when ARCore's Scene Semantics runs on this device (the ARCoreSemantics pod linked), 0 when
+// not, -1 before ARCore's session exists.
+int ar_native_semantics_supported(void) {
+#ifdef ESKIU_ARCORE_SEMANTICS
+    if (!gar) return -1;
+    return [gar isSemanticModeSupported:GARSemanticModeEnabled] ? 1 : 0;
+#else
+    return 0;
+#endif
+}
+
 int ar_native_semantics(int64_t *info) {
 #ifdef ESKIU_ARCORE_SEMANTICS
     CVPixelBufferRef labels = garLent.semanticImage;
