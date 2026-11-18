@@ -82,19 +82,25 @@ static void stopThread(void) {
     pthread_join(thread, NULL);
 }
 
+// The largest CPU image chosen when none holds the wish: above 1920x1080 the image costs more
+// than some mid-range phones sustain, and their tracking pauses many times a second (viro#568).
+#define MAX_CAMERA_AREA (1920 * 1080)
+
 // Picks the camera config whose CPU image is the smallest that holds the wish, else the
-// largest. Called while the session is paused.
+// largest up to MAX_CAMERA_AREA (the smallest when every one is larger); the back camera at
+// 30 fps. Called while the session is paused.
 static void chooseCameraConfig(void) {
     ArCameraConfigFilter *filter = NULL;
     ArCameraConfigList *list = NULL;
     p_ArCameraConfigFilter_create(session, &filter);
     p_ArCameraConfigList_create(session, &list);
     if (flags & FLAG_FRONT) p_ArCameraConfigFilter_setFacingDirection(session, filter, AR_CAMERA_CONFIG_FACING_DIRECTION_FRONT_);
+    else p_ArCameraConfigFilter_setTargetFps(session, filter, AR_CAMERA_CONFIG_TARGET_FPS_30_);
     p_ArSession_getSupportedCameraConfigsWithFilter(session, filter, list);
     int32_t n = 0;
     p_ArCameraConfigList_getSize(session, list, &n);
-    int best = -1, largest = -1;
-    int64_t best_area = 0, largest_area = 0;
+    int best = -1, largest = -1, smallest = -1;
+    int64_t best_area = 0, largest_area = 0, smallest_area = 0;
     ArCameraConfig *config = NULL;
     p_ArCameraConfig_create(session, &config);
     for (int i = 0; i < n; i++) {
@@ -102,10 +108,11 @@ static void chooseCameraConfig(void) {
         p_ArCameraConfigList_getItem(session, list, i, config);
         p_ArCameraConfig_getImageDimensions(session, config, &w, &h);
         int64_t area = (int64_t)w * h;
-        if (area > largest_area) { largest_area = area; largest = i; }
+        if (area <= MAX_CAMERA_AREA && area > largest_area) { largest_area = area; largest = i; }
+        if (smallest < 0 || area < smallest_area) { smallest_area = area; smallest = i; }
         if (w >= wish_width && h >= wish_height && (best < 0 || area < best_area)) { best_area = area; best = i; }
     }
-    int pick = best >= 0 ? best : largest;
+    int pick = best >= 0 ? best : largest >= 0 ? largest : smallest;
     if (pick >= 0) {
         p_ArCameraConfigList_getItem(session, list, pick, config);
         p_ArSession_setCameraConfig(session, config);

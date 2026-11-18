@@ -91,6 +91,7 @@ enum {
     AR_AUGMENTED_FACE_REGION_FOREHEAD_LEFT_ = 1,
     AR_AUGMENTED_FACE_REGION_FOREHEAD_RIGHT_ = 2,
     AR_CAMERA_CONFIG_FACING_DIRECTION_FRONT_ = 1,
+    AR_CAMERA_CONFIG_TARGET_FPS_30_ = 1,
     AR_AUGMENTED_IMAGE_TRACKING_METHOD_FULL_TRACKING_ = 1,
     AR_AUGMENTED_IMAGE_TRACKING_METHOD_LAST_KNOWN_POSE_ = 2,
     AR_PLANE_HORIZONTAL_DOWNWARD_FACING_ = 1,
@@ -224,6 +225,7 @@ enum {
     X(void, ArAugmentedImage_getCenterPose, (const ArSession *session, const ArAugmentedImage *augmented_image, ArPose *out_pose)) \
     X(void, ArConfig_setAugmentedFaceMode, (const ArSession *session, ArConfig *config, ArAugmentedFaceMode augmented_face_mode)) \
     X(void, ArCameraConfigFilter_setFacingDirection, (const ArSession *session, ArCameraConfigFilter *filter, ArCameraConfigFacingDirection facing_direction_filter)) \
+    X(void, ArCameraConfigFilter_setTargetFps, (const ArSession *session, ArCameraConfigFilter *filter, const uint32_t fps_filter)) \
     X(void, ArAugmentedFace_getMeshVertices, (const ArSession *session, const ArAugmentedFace *face, const float **out_vertices, int32_t *out_number_of_vertices)) \
     X(void, ArAugmentedFace_getMeshTextureCoordinates, (const ArSession *session, const ArAugmentedFace *face, const float **out_texture_coordinates, int32_t *out_number_of_texture_coordinates)) \
     X(void, ArAugmentedFace_getMeshTriangleIndices, (const ArSession *session, const ArAugmentedFace *face, const uint16_t **out_triangle_indices, int32_t *out_number_of_triangles)) \
