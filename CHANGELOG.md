@@ -3,7 +3,19 @@
 All notable changes to this package are documented in this file. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.2.1] - 2026-11-16
+## [0.2.2] - 2026-11-18
+
+### Fixed
+
+- Android: the camera config is the smallest that holds the wished size, else the largest up to
+  1920x1080, and the rear camera's at 30 fps. Above 1080p the CPU image costs more than some
+  mid-range phones sustain, and their tracking paused many times a second (ViroReact 3.2.1).
+
+### Changed
+
+- Depends on ui 0.6.2.
+
+## [0.2.1]
 
 ### Changed
 
